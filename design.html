@@ -9,12 +9,10 @@
             margin: 20px;
             background-color: #f0f0f0;
         }
-
         .container {
             max-width: 800px;
             margin: 0 auto;
         }
-
         .toolbar {
             margin-bottom: 10px;
             padding: 10px;
@@ -22,7 +20,6 @@
             border-radius: 5px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-
         button {
             padding: 8px 16px;
             margin-right: 5px;
@@ -32,35 +29,29 @@
             border-radius: 4px;
             cursor: pointer;
         }
-
         button:hover {
             background-color: #45a049;
         }
-
         #drawingCanvas {
             border: 2px solid #ccc;
             background-color: white;
             touch-action: none;
         }
-
         .color-picker {
             display: inline-block;
             vertical-align: middle;
             margin-left: 10px;
         }
-
         .mode-indicator {
             display: inline-block;
             padding: 5px 10px;
             margin-left: 15px;
             border-radius: 3px;
         }
-
         .draw-mode {
             background-color: #4CAF50;
             color: white;
         }
-
         .select-mode {
             background-color: #2196F3;
             color: white;
@@ -152,8 +143,9 @@
             currentPoints = [];
         }
 
-        // 选区功能
+        // 选区功能（已修复重复选框问题）
         function startSelection(e) {
+            clearSelection(); // 清除旧选区
             e.preventDefault();
             startPoint = getCoordinates(e);
             
