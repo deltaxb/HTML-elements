@@ -671,7 +671,7 @@ class SVGExporter extends HTMLElement {
         super();
         this.attachShadow({ mode: 'open' });
         
-        // 组件样式
+        // 扩展样式
         const style = document.createElement('style');
         style.textContent = `
             :host {
@@ -682,23 +682,35 @@ class SVGExporter extends HTMLElement {
                 background-color: #f0f0f0;
             }
             .toolbar {
+                display: flex;
+                gap: 10px;
                 margin-bottom: 10px;
                 padding: 10px;
                 background-color: white;
                 border-radius: 5px;
                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                flex-wrap: wrap;
+            }
+            .tool-group {
+                display: flex;
+                gap: 5px;
+                align-items: center;
             }
             button {
                 padding: 8px 16px;
-                margin-right: 5px;
                 background-color: #4CAF50;
                 color: white;
                 border: none;
                 border-radius: 4px;
                 cursor: pointer;
+                transition: all 0.2s;
+            }
+            button.active {
+                background-color: #2196F3;
+                box-shadow: 0 0 3px rgba(0,0,0,0.3);
             }
             button:hover {
-                background-color: #45a049;
+                filter: brightness(1.1);
             }
             #drawingCanvas {
                 border: 2px solid #ccc;
@@ -706,37 +718,38 @@ class SVGExporter extends HTMLElement {
                 touch-action: none;
             }
             .color-picker {
-                display: inline-block;
-                vertical-align: middle;
-                margin-left: 10px;
+                width: 40px;
+                height: 30px;
             }
-            .mode-indicator {
-                display: inline-block;
-                padding: 5px 10px;
-                margin-left: 15px;
-                border-radius: 3px;
-            }
-            .draw-mode {
-                background-color: #4CAF50;
-                color: white;
-            }
-            .select-mode {
-                background-color: #2196F3;
-                color: white;
+            input[type="range"] {
+                width: 100px;
             }
         `;
 
-        // 组件结构
+        // 增强的工具栏结构
         const template = document.createElement('template');
         template.innerHTML = `
             <div class="toolbar">
-                <button id="toggleMode">切换模式</button>
-                <span id="modeIndicator" class="mode-indicator draw-mode">绘图模式</span>
-                <button id="clearCanvas">清空</button>
-                <button id="exportSVG">导出SVG</button>
-                <input type="color" id="colorPicker" class="color-picker" value="#000000">
-                <input type="range" id="brushSize" min="1" max="50" value="3">
-                <span id="brushSizeValue">3px</span>
+                <div class="tool-group">
+                    <button data-mode="select" class="active">选区</button>
+                    <button data-mode="pen">画笔</button>
+                    <button data-mode="line">直线</button>
+                    <button data-mode="arrow">箭头</button>
+                    <button data-mode="rect">矩形</button>
+                    <button data-mode="circle">圆形</button>
+                </div>
+                <div class="tool-group">
+                    <input type="color" id="fillColor" class="color-picker" value="#000000">
+                    <input type="color" id="strokeColor" class="color-picker" value="#000000">
+                </div>
+                <div class="tool-group">
+                    <input type="range" id="strokeWidth" min="1" max="50" value="3">
+                    <span id="strokeWidthValue">3px</span>
+                </div>
+                <div class="tool-group">
+                    <button id="clearCanvas">清空</button>
+                    <button id="exportSVG">导出SVG</button>
+                </div>
             </div>
             <svg id="drawingCanvas" width="800" height="600"></svg>
         `;
@@ -745,210 +758,215 @@ class SVGExporter extends HTMLElement {
         
         // 初始化变量
         this.canvas = this.shadowRoot.getElementById('drawingCanvas');
-        this.colorPicker = this.shadowRoot.getElementById('colorPicker');
-        this.brushSize = this.shadowRoot.getElementById('brushSize');
-        this.modeIndicator = this.shadowRoot.getElementById('modeIndicator');
-        
-        this.isDrawing = false;
-        this.currentPath = null;
-        this.currentPoints = [];
-        this.mode = 'draw';
-        this.selection = null;
-        this.selectionRect = null;
+        this.currentShape = null;
         this.startPoint = null;
+        this.currentMode = 'select';
+        this.isDrawing = false;
     }
 
     connectedCallback() {
-        // 事件绑定
-        this.shadowRoot.getElementById('toggleMode').addEventListener('click', () => this.toggleMode());
-        this.shadowRoot.getElementById('clearCanvas').addEventListener('click', () => this.clearCanvas());
-        this.shadowRoot.getElementById('exportSVG').addEventListener('click', () => this.exportSVG());
-        
-        this.brushSize.addEventListener('input', () => {
-            this.shadowRoot.getElementById('brushSizeValue').textContent = 
-                `${this.brushSize.value}px`;
+        // 工具按钮事件
+        this.shadowRoot.querySelectorAll('button[data-mode]').forEach(btn => {
+            btn.addEventListener('click', () => this.setMode(btn.dataset.mode));
         });
 
+        // 颜色和线条设置
+        this.strokeWidth = this.shadowRoot.getElementById('strokeWidth');
+        this.strokeWidth.addEventListener('input', () => {
+            this.shadowRoot.getElementById('strokeWidthValue').textContent = 
+                `${this.strokeWidth.value}px`;
+        });
+
+        // 其他事件
+        this.shadowRoot.getElementById('clearCanvas').addEventListener('click', () => this.clearCanvas());
+        this.shadowRoot.getElementById('exportSVG').addEventListener('click', () => this.exportSVG());
+
         // 画布事件
-        this.canvas.addEventListener('mousedown', e => this.handleMouseDown(e));
-        this.canvas.addEventListener('mousemove', e => this.handleMouseMove(e));
-        this.canvas.addEventListener('mouseup', () => this.handleMouseUp());
-        this.canvas.addEventListener('mouseleave', () => this.handleMouseUp());
-        this.canvas.addEventListener('touchstart', e => this.handleTouchStart(e));
-        this.canvas.addEventListener('touchmove', e => this.handleTouchMove(e));
-        this.canvas.addEventListener('touchend', () => this.handleTouchEnd());
+        this.canvas.addEventListener('mousedown', e => this.startDrawing(e));
+        this.canvas.addEventListener('mousemove', e => this.draw(e));
+        this.canvas.addEventListener('mouseup', () => this.finishDrawing());
+        this.canvas.addEventListener('mouseleave', () => this.finishDrawing());
     }
 
-    toggleMode() {
-        this.mode = this.mode === 'draw' ? 'select' : 'draw';
-        this.modeIndicator.className = `mode-indicator ${this.mode}-mode`;
-        this.modeIndicator.textContent = 
-            `${this.mode === 'draw' ? '绘图' : '选区'}模式`;
-        this.clearSelection();
-    }
-
-    handleMouseDown(e) {
-        this.mode === 'draw' ? this.startDrawing(e) : this.startSelection(e);
-    }
-
-    handleMouseMove(e) {
-        if (this.mode === 'draw') this.draw(e);
-    }
-
-    handleMouseUp() {
-        if (this.mode === 'draw') this.endDrawing();
-    }
-
-    handleTouchStart(e) {
-        if (this.mode === 'draw') this.startDrawing(e);
-    }
-
-    handleTouchMove(e) {
-        if (this.mode === 'draw') this.draw(e);
-    }
-
-    handleTouchEnd() {
-        if (this.mode === 'draw') this.endDrawing();
+    setMode(mode) {
+        this.currentMode = mode;
+        this.shadowRoot.querySelectorAll('button[data-mode]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === mode);
+        });
     }
 
     startDrawing(e) {
-        e.preventDefault();
+        if (this.currentMode === 'select') return;
+        
         this.isDrawing = true;
-        const point = this.getCoordinates(e);
+        this.startPoint = this.getCoordinates(e);
         
-        this.currentPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        this.currentPath.setAttribute("fill", "none");
-        this.currentPath.setAttribute("stroke", this.colorPicker.value);
-        this.currentPath.setAttribute("stroke-width", this.brushSize.value);
-        this.currentPath.setAttribute("stroke-linecap", "round");
-        
-        this.currentPoints = [point];
-        this.updatePath();
-        this.canvas.appendChild(this.currentPath);
+        switch(this.currentMode) {
+            case 'pen':
+                this.createPath();
+                break;
+            case 'line':
+            case 'arrow':
+            case 'rect':
+            case 'circle':
+                this.createShape();
+                break;
+        }
     }
 
     draw(e) {
         if (!this.isDrawing) return;
-        e.preventDefault();
-        const point = this.getCoordinates(e);
-        this.currentPoints.push(point);
-        this.updatePath();
-    }
-
-    endDrawing() {
-        this.isDrawing = false;
-        this.currentPath = null;
-        this.currentPoints = [];
-    }
-
-    startSelection(e) {
-        this.clearSelection();
-        e.preventDefault();
-        this.startPoint = this.getCoordinates(e);
         
-        this.selectionRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        this.selectionRect.classList.add('selection-rect');
-        this.selectionRect.setAttribute('stroke', '#2196F3');
-        this.selectionRect.setAttribute('fill', 'rgba(33, 150, 243, 0.2)');
-        this.selectionRect.setAttribute('stroke-width', '2');
-        this.selectionRect.setAttribute('stroke-dasharray', '5,5');
-        this.canvas.appendChild(this.selectionRect);
+        const currentPoint = this.getCoordinates(e);
+        const width = currentPoint.x - this.startPoint.x;
+        const height = currentPoint.y - this.startPoint.y;
 
-        const updateSelection = e => {
-            const current = this.getCoordinates(e);
-            const x = Math.min(this.startPoint.x, current.x);
-            const y = Math.min(this.startPoint.y, current.y);
-            const width = Math.abs(current.x - this.startPoint.x);
-            const height = Math.abs(current.y - this.startPoint.y);
-            
-            this.selectionRect.setAttribute('x', x);
-            this.selectionRect.setAttribute('y', y);
-            this.selectionRect.setAttribute('width', width);
-            this.selectionRect.setAttribute('height', height);
-        };
-
-        const finish = () => {
-            this.canvas.removeEventListener('mousemove', updateSelection);
-            this.canvas.removeEventListener('mouseup', finish);
-            this.selection = {
-                x: parseFloat(this.selectionRect.getAttribute('x')),
-                y: parseFloat(this.selectionRect.getAttribute('y')),
-                width: parseFloat(this.selectionRect.getAttribute('width')),
-                height: parseFloat(this.selectionRect.getAttribute('height'))
-            };
-        };
-
-        this.canvas.addEventListener('mousemove', updateSelection);
-        this.canvas.addEventListener('mouseup', finish);
+        switch(this.currentMode) {
+            case 'pen':
+                this.updatePath(currentPoint);
+                break;
+                
+            case 'line':
+            case 'arrow':
+                this.updateLine(currentPoint);
+                break;
+                
+            case 'rect':
+                this.updateRect(width, height);
+                break;
+                
+            case 'circle':
+                this.updateCircle(width, height);
+                break;
+        }
     }
 
+    finishDrawing() {
+        if (!this.isDrawing) return;
+        this.isDrawing = false;
+        
+        // 箭头处理
+        if (this.currentMode === 'arrow' && this.currentShape) {
+            this.addArrowhead();
+        }
+        
+        this.currentShape = null;
+    }
+
+    // 创建基础形状
+    createPath() {
+        this.currentShape = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        this.currentShape.setAttribute("fill", "none");
+        this.currentShape.setAttribute("stroke", this.getStrokeColor());
+        this.currentShape.setAttribute("stroke-width", this.strokeWidth.value);
+        this.currentShape.setAttribute("d", `M ${this.startPoint.x} ${this.startPoint.y}`);
+        this.canvas.appendChild(this.currentShape);
+    }
+
+    createShape() {
+        const ns = "http://www.w3.org/2000/svg";
+        switch(this.currentMode) {
+            case 'line':
+            case 'arrow':
+                this.currentShape = document.createElementNS(ns, "line");
+                break;
+            case 'rect':
+                this.currentShape = document.createElementNS(ns, "rect");
+                break;
+            case 'circle':
+                this.currentShape = document.createElementNS(ns, "ellipse");
+                break;
+        }
+        
+        this.currentShape.setAttribute("fill", this.getFillColor());
+        this.currentShape.setAttribute("stroke", this.getStrokeColor());
+        this.currentShape.setAttribute("stroke-width", this.strokeWidth.value);
+        this.canvas.appendChild(this.currentShape);
+    }
+
+    // 更新各种形状
+    updatePath(point) {
+        const d = this.currentShape.getAttribute("d");
+        this.currentShape.setAttribute("d", `${d} L ${point.x} ${point.y}`);
+    }
+
+    updateLine(endPoint) {
+        this.currentShape.setAttribute("x1", this.startPoint.x);
+        this.currentShape.setAttribute("y1", this.startPoint.y);
+        this.currentShape.setAttribute("x2", endPoint.x);
+        this.currentShape.setAttribute("y2", endPoint.y);
+    }
+
+    updateRect(width, height) {
+        this.currentShape.setAttribute("x", Math.min(this.startPoint.x, this.startPoint.x + width));
+        this.currentShape.setAttribute("y", Math.min(this.startPoint.y, this.startPoint.y + height));
+        this.currentShape.setAttribute("width", Math.abs(width));
+        this.currentShape.setAttribute("height", Math.abs(height));
+    }
+
+    updateCircle(width, height) {
+        const cx = this.startPoint.x + width/2;
+        const cy = this.startPoint.y + height/2;
+        this.currentShape.setAttribute("cx", cx);
+        this.currentShape.setAttribute("cy", cy);
+        this.currentShape.setAttribute("rx", Math.abs(width/2));
+        this.currentShape.setAttribute("ry", Math.abs(height/2));
+    }
+
+    // 添加箭头标记
+    addArrowhead() {
+        const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+        marker.setAttribute("id", "arrowhead");
+        marker.setAttribute("markerWidth", "10");
+        marker.setAttribute("markerHeight", "7");
+        marker.setAttribute("refX", "10");
+        marker.setAttribute("refY", "3.5");
+        marker.setAttribute("orient", "auto");
+        
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", "M 0 0 L 10 3.5 L 0 7");
+        path.setAttribute("fill", this.getStrokeColor());
+        marker.appendChild(path);
+        
+        this.canvas.appendChild(marker);
+        this.currentShape.setAttribute("marker-end", "url(#arrowhead)");
+    }
+
+    // 辅助方法
     getCoordinates(e) {
         const rect = this.canvas.getBoundingClientRect();
-        if (e.touches) {
-            return {
-                x: e.touches[0].clientX - rect.left,
-                y: e.touches[0].clientY - rect.top
-            };
-        }
         return {
             x: e.clientX - rect.left,
             y: e.clientY - rect.top
         };
     }
 
-    updatePath() {
-        if (!this.currentPath) return;
-        const d = this.currentPoints.map((point, index) => {
-            return `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`;
-        }).join(' ');
-        this.currentPath.setAttribute("d", d);
+    getStrokeColor() {
+        return this.shadowRoot.getElementById('strokeColor').value;
+    }
+
+    getFillColor() {
+        return this.shadowRoot.getElementById('fillColor').value;
     }
 
     clearCanvas() {
         while (this.canvas.firstChild) {
             this.canvas.removeChild(this.canvas.firstChild);
         }
-        this.clearSelection();
-    }
-
-    clearSelection() {
-        if (this.selectionRect) {
-            this.canvas.removeChild(this.selectionRect);
-            this.selection = null;
-            this.selectionRect = null;
-        }
     }
 
     exportSVG() {
-        const clonedSVG = this.canvas.cloneNode(true);
-        
-        // 清理临时元素
-        clonedSVG.querySelectorAll('.selection-rect').forEach(el => el.remove());
-        
-        // 应用选区
-        if (this.selection && this.selection.width > 0 && this.selection.height > 0) {
-            clonedSVG.setAttribute('viewBox', 
-                `${this.selection.x} ${this.selection.y} ${this.selection.width} ${this.selection.height}`);
-            clonedSVG.setAttribute('width', this.selection.width);
-            clonedSVG.setAttribute('height', this.selection.height);
-        } else {
-            clonedSVG.setAttribute('viewBox', `0 0 ${this.canvas.width.baseVal.value} ${this.canvas.height.baseVal.value}`);
-        }
-
-        const svgData = new XMLSerializer().serializeToString(clonedSVG);
+        const svgData = new XMLSerializer().serializeToString(this.canvas);
         const blob = new Blob([svgData], {type: "image/svg+xml"});
         const url = URL.createObjectURL(blob);
         
         const a = document.createElement('a');
         a.href = url;
-        a.download = this.selection ? 'selected-area.svg' : 'drawing.svg';
-        document.body.appendChild(a);
+        a.download = 'drawing.svg';
         a.click();
-        document.body.removeChild(a);
         URL.revokeObjectURL(url);
     }
 }
-
 
 // 注册自定义元素
 customElements.define('three-editor', ThreeEditor);
