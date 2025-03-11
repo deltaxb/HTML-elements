@@ -671,7 +671,10 @@ class SVGExporter extends HTMLElement {
         super();
         this.attachShadow({ mode: 'open' });
         
-        // 样式
+        this.undoStack = [];
+        this.redoStack = [];
+        this.maxHistorySteps = 100;
+
         const style = document.createElement('style');
         style.textContent = `
             :host {
@@ -680,23 +683,21 @@ class SVGExporter extends HTMLElement {
                 margin: 20px auto;
                 font-family: Arial, sans-serif;
                 background-color: #f0f0f0;
+                padding: 15px;
+                border-radius: 8px;
+                box-shadow: 0 4px 8px rgba(0,0,0,0.1);
             }
             .toolbar {
-                display: flex;
-                gap: 10px;
                 margin-bottom: 10px;
                 padding: 10px;
                 background-color: white;
                 border-radius: 5px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                display: flex;
+                align-items: center;
+                gap: 10px;
                 flex-wrap: wrap;
             }
-            .tool-group {
-                display: flex;
-                gap: 5px;
-                align-items: center;
-            }
-            button {
+            button, select {
                 padding: 8px 16px;
                 background-color: #4CAF50;
                 color: white;
@@ -705,12 +706,13 @@ class SVGExporter extends HTMLElement {
                 cursor: pointer;
                 transition: all 0.2s;
             }
-            button.active {
-                background-color: #2196F3;
-                box-shadow: 0 0 3px rgba(0,0,0,0.3);
+            button:hover, select:hover {
+                background-color: #45a049;
             }
-            button:hover {
-                filter: brightness(1.1);
+            button:disabled {
+                background-color: #cccccc !important;
+                cursor: not-allowed;
+                opacity: 0.7;
             }
             #drawingCanvas {
                 border: 2px solid #ccc;
@@ -721,284 +723,415 @@ class SVGExporter extends HTMLElement {
                 width: 40px;
                 height: 30px;
             }
-            input[type="range"] {
-                width: 100px;
+            .mode-indicator {
+                padding: 5px 10px;
+                border-radius: 3px;
+                font-weight: bold;
             }
-            #undoBtn {
-                background-color: #ff9800;
+            .draw-mode { background-color: #4CAF50; }
+            .select-mode { background-color: #2196F3; }
+            #coordDisplay {
+                margin-left: auto;
+                font-family: monospace;
             }
         `;
 
-        // 工具栏结构
         const template = document.createElement('template');
         template.innerHTML = `
             <div class="toolbar">
-                <div class="tool-group">
-                    <button data-mode="select" class="active">选区</button>
-                    <button data-mode="pen">画笔</button>
-                    <button data-mode="line">直线</button>
-                    <button data-mode="arrow">箭头</button>
-                    <button data-mode="rect">矩形</button>
-                    <button data-mode="circle">圆形</button>
-                </div>
-                <div class="tool-group">
-                    <input type="color" id="fillColor" class="color-picker" value="#000000">
-                    <input type="color" id="strokeColor" class="color-picker" value="#000000">
-                </div>
-                <div class="tool-group">
-                    <input type="range" id="strokeWidth" min="1" max="50" value="3">
-                    <span id="strokeWidthValue">3px</span>
-                </div>
-                <div class="tool-group">
-                    <button id="undoBtn" title="撤销 (Ctrl+Z)">↩️ 撤销</button>
-                    <button id="clearCanvas">清空</button>
-                    <button id="exportSVG">导出SVG</button>
-                </div>
+                <select id="toolSelect">
+                    <option value="freehand">自由绘制</option>
+                    <option value="line">直线</option>
+                    <option value="rect">矩形</option>
+                    <option value="circle">圆形</option>
+                </select>
+                <button id="toggleMode">切换模式</button>
+                <span id="modeIndicator" class="mode-indicator draw-mode">绘图模式</span>
+                <button id="clearCanvas">清空</button>
+                <button id="exportSVG">导出SVG</button>
+                <button id="undoBtn">撤销 (Ctrl+Z)</button>
+                <input type="color" id="colorPicker" class="color-picker">
+                <input type="range" id="brushSize" min="1" max="50" value="3">
+                <span id="brushSizeValue">3px</span>
+                <span id="coordDisplay">X: 0, Y: 0</span>
             </div>
-            <svg id="drawingCanvas" width="800" height="600"></svg>
+            <svg id="drawingCanvas" width="800" height="600" tabindex="0"></svg>
         `;
 
         this.shadowRoot.append(style, template.content.cloneNode(true));
         
-        // 初始化变量
         this.canvas = this.shadowRoot.getElementById('drawingCanvas');
-        this.currentShape = null;
-        this.startPoint = null;
-        this.currentMode = 'select';
+        this.colorPicker = this.shadowRoot.getElementById('colorPicker');
+        this.brushSize = this.shadowRoot.getElementById('brushSize');
+        this.modeIndicator = this.shadowRoot.getElementById('modeIndicator');
+        this.handleKeydown = this.handleKeydown.bind(this); // 绑定上下文
         this.isDrawing = false;
-        this.history = [];
+        this.currentElement = null;
+        this.mode = 'draw';
+        this.selection = null;
+        this.selectionRect = null;
+        this.startPoint = null;
+        this.currentTool = 'freehand';
+        this.prevPoint = null;
     }
 
     connectedCallback() {
-        // 工具按钮事件
-        this.shadowRoot.querySelectorAll('button[data-mode]').forEach(btn => {
-            btn.addEventListener('click', () => this.setMode(btn.dataset.mode));
-        });
-
-        // 颜色和线条设置
-        this.strokeWidth = this.shadowRoot.getElementById('strokeWidth');
-        this.strokeWidth.addEventListener('input', () => {
-            this.shadowRoot.getElementById('strokeWidthValue').textContent = 
-                `${this.strokeWidth.value}px`;
-        });
-
-        // 按钮事件
-        this.shadowRoot.getElementById('undoBtn').addEventListener('click', () => this.undo());
+        this.shadowRoot.getElementById('toggleMode').addEventListener('click', () => this.toggleMode());
         this.shadowRoot.getElementById('clearCanvas').addEventListener('click', () => this.clearCanvas());
         this.shadowRoot.getElementById('exportSVG').addEventListener('click', () => this.exportSVG());
-
-        // 画布事件
-        this.canvas.addEventListener('mousedown', e => this.startDrawing(e));
-        this.canvas.addEventListener('mousemove', e => this.draw(e));
-        this.canvas.addEventListener('mouseup', () => this.finishDrawing());
-        this.canvas.addEventListener('mouseleave', () => this.finishDrawing());
-
-        // 键盘事件
-        document.addEventListener('keydown', e => this.handleKeyDown(e));
-    }
-
-    setMode(mode) {
-        this.currentMode = mode;
-        this.shadowRoot.querySelectorAll('button[data-mode]').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.mode === mode);
+        this.shadowRoot.getElementById('undoBtn').addEventListener('click', () => this.undo());
+        this.shadowRoot.getElementById('toolSelect').addEventListener('change', e => {
+            this.currentTool = e.target.value;
         });
+
+        this.brushSize.addEventListener('input', () => {
+            this.shadowRoot.getElementById('brushSizeValue').textContent = 
+                `${this.brushSize.value}px`;
+        });
+
+        const handleStart = e => this.handleStart(e);
+        const handleMove = e => this.handleMove(e);
+        const handleEnd = () => this.handleEnd();
+
+        this.canvas.addEventListener('mousedown', handleStart);
+        this.canvas.addEventListener('mousemove', handleMove);
+        this.canvas.addEventListener('mouseup', handleEnd);
+        this.canvas.addEventListener('mouseleave', handleEnd);
+        this.canvas.addEventListener('touchstart', handleStart);
+        this.canvas.addEventListener('touchmove', handleMove);
+        this.canvas.addEventListener('touchend', handleEnd);
+        document.addEventListener('keydown', e => this.handleKeydown(e));
+
+        this.canvas.addEventListener('mousemove', e => {
+            const pos = this.getCoordinates(e);
+            this.shadowRoot.getElementById('coordDisplay').textContent = 
+                `X: ${Math.round(pos.x)}, Y: ${Math.round(pos.y)}`;
+        });
+
+        this.saveState();
     }
 
-    startDrawing(e) {
-        if (this.currentMode === 'select') return;
-        
-        this.isDrawing = true;
-        this.startPoint = this.getCoordinates(e);
-        
-        switch(this.currentMode) {
-            case 'pen':
-                this.createPath();
-                break;
-            case 'line':
-            case 'arrow':
-            case 'rect':
-            case 'circle':
-                this.createShape();
-                break;
+    saveState() {
+        const snapshot = {
+            elements: Array.from(this.canvas.children).map(el => el.cloneNode(true)),
+            selection: this.selection ? {...this.selection} : null
+        };
+
+        this.undoStack.push(snapshot);
+        if(this.undoStack.length > this.maxHistorySteps) {
+            this.undoStack.shift();
         }
+        this.redoStack = [];
+        this.updateUndoButton();
     }
 
-    draw(e) {
-        if (!this.isDrawing) return;
+    undo() {
+        if(this.undoStack.length < 2) return;
         
-        const currentPoint = this.getCoordinates(e);
-        const width = currentPoint.x - this.startPoint.x;
-        const height = currentPoint.y - this.startPoint.y;
+        this.redoStack.push(this.undoStack.pop());
+        const prevState = this.undoStack[this.undoStack.length - 1];
+        this.restoreState(prevState);
+        this.updateUndoButton();
+    }
 
-        switch(this.currentMode) {
-            case 'pen':
-                this.updatePath(currentPoint);
-                break;
-                
-            case 'line':
-            case 'arrow':
-                this.updateLine(currentPoint);
-                break;
-                
-            case 'rect':
-                this.updateRect(width, height);
-                break;
-                
-            case 'circle':
-                this.updateCircle(width, height);
-                break;
+    restoreState(state) {
+        while(this.canvas.firstChild) {
+            this.canvas.firstChild.remove();
         }
+        state.elements.forEach(el => {
+            this.canvas.appendChild(el);
+        });
+        this.selection = state.selection ? {...state.selection} : null;
+        this.selectionRect = this.canvas.querySelector('.selection-rect');
     }
 
-    finishDrawing() {
-        if (!this.isDrawing) return;
-        this.isDrawing = false;
-        
-        let elements = [];
-        if (this.currentShape) elements.push(this.currentShape);
-        
-        if (this.currentMode === 'arrow' && this.currentShape) {
-            const marker = this.addArrowhead();
-            elements.push(marker);
-        }
-        
-        if (elements.length > 0) {
-            this.history.push({ elements });
-        }
-        
-        this.currentShape = null;
+    updateUndoButton() {
+        const undoBtn = this.shadowRoot.getElementById('undoBtn');
+        undoBtn.disabled = this.undoStack.length < 2;
     }
 
-    createPath() {
-        this.currentShape = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        this.currentShape.setAttribute("fill", "none");
-        this.currentShape.setAttribute("stroke", this.getStrokeColor());
-        this.currentShape.setAttribute("stroke-width", this.strokeWidth.value);
-        this.currentShape.setAttribute("d", `M ${this.startPoint.x} ${this.startPoint.y}`);
-        this.canvas.appendChild(this.currentShape);
-    }
-
-    createShape() {
-        const ns = "http://www.w3.org/2000/svg";
-        switch(this.currentMode) {
-            case 'line':
-            case 'arrow':
-                this.currentShape = document.createElementNS(ns, "line");
-                break;
-            case 'rect':
-                this.currentShape = document.createElementNS(ns, "rect");
-                break;
-            case 'circle':
-                this.currentShape = document.createElementNS(ns, "ellipse");
-                break;
-        }
-        
-        this.currentShape.setAttribute("fill", this.getFillColor());
-        this.currentShape.setAttribute("stroke", this.getStrokeColor());
-        this.currentShape.setAttribute("stroke-width", this.strokeWidth.value);
-        this.canvas.appendChild(this.currentShape);
-    }
-
-    updatePath(point) {
-        const d = this.currentShape.getAttribute("d");
-        this.currentShape.setAttribute("d", `${d} L ${point.x} ${point.y}`);
-    }
-
-    updateLine(endPoint) {
-        this.currentShape.setAttribute("x1", this.startPoint.x);
-        this.currentShape.setAttribute("y1", this.startPoint.y);
-        this.currentShape.setAttribute("x2", endPoint.x);
-        this.currentShape.setAttribute("y2", endPoint.y);
-    }
-
-    updateRect(width, height) {
-        this.currentShape.setAttribute("x", Math.min(this.startPoint.x, this.startPoint.x + width));
-        this.currentShape.setAttribute("y", Math.min(this.startPoint.y, this.startPoint.y + height));
-        this.currentShape.setAttribute("width", Math.abs(width));
-        this.currentShape.setAttribute("height", Math.abs(height));
-    }
-
-    updateCircle(width, height) {
-        const cx = this.startPoint.x + width/2;
-        const cy = this.startPoint.y + height/2;
-        this.currentShape.setAttribute("cx", cx);
-        this.currentShape.setAttribute("cy", cy);
-        this.currentShape.setAttribute("rx", Math.abs(width/2));
-        this.currentShape.setAttribute("ry", Math.abs(height/2));
-    }
-
-    addArrowhead() {
-        const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
-        marker.setAttribute("id", "arrowhead");
-        marker.setAttribute("markerWidth", "10");
-        marker.setAttribute("markerHeight", "7");
-        marker.setAttribute("refX", "10");
-        marker.setAttribute("refY", "3.5");
-        marker.setAttribute("orient", "auto");
-        
-        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        path.setAttribute("d", "M 0 0 L 10 3.5 L 0 7");
-        path.setAttribute("fill", this.getStrokeColor());
-        marker.appendChild(path);
-        
-        this.canvas.appendChild(marker);
-        this.currentShape.setAttribute("marker-end", "url(#arrowhead)");
-        return marker;
-    }
-
-    handleKeyDown(e) {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+    handleKeydown(e) {
+        if((e.ctrlKey || e.metaKey) && e.key === 'z') {
             e.preventDefault();
             this.undo();
         }
     }
 
-    undo() {
-        if (this.history.length > 0) {
-            const lastStep = this.history.pop();
-            lastStep.elements.forEach(element => {
-                if (element.parentNode) {
-                    element.parentNode.removeChild(element);
-                }
-            });
+    toggleMode() {
+        this.mode = this.mode === 'draw' ? 'select' : 'draw';
+        this.modeIndicator.className = `mode-indicator ${this.mode}-mode`;
+        this.modeIndicator.textContent = 
+            `${this.mode === 'draw' ? '绘图' : '选区'}模式`;
+        this.clearSelection();
+    }
+
+    handleStart(e) {
+        if (this.mode === 'draw') {
+            if (this.currentTool === 'freehand') {
+                this.startFreehand(e);
+            } else {
+                this.startDrawing(e);
+            }
+        } else {
+            this.startSelection(e);
         }
+    }
+
+    handleMove(e) {
+        if (this.isDrawing) this.continueDrawing(e);
+    }
+
+    handleEnd() {
+        if (this.isDrawing) {
+            this.finishDrawing();
+            this.saveState();
+        }
+    }
+
+    startFreehand(e) {
+        e.preventDefault();
+        this.isDrawing = true;
+        const point = this.getCoordinates(e);
+        
+        this.currentElement = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        this.currentElement.setAttribute("fill", "none");
+        this.currentElement.setAttribute("stroke", this.colorPicker.value);
+        this.currentElement.setAttribute("stroke-width", this.brushSize.value);
+        this.currentElement.setAttribute("stroke-linecap", "round");
+        this.currentElement.setAttribute("d", `M ${point.x} ${point.y}`);
+        this.canvas.appendChild(this.currentElement);
+        this.prevPoint = point;
+    }
+
+    startDrawing(e) {
+        e.preventDefault();
+        this.isDrawing = true;
+        const point = this.getCoordinates(e);
+        
+        switch(this.currentTool) {
+            case 'line':
+                this.currentElement = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                this.currentElement.setAttribute("x1", point.x);
+                this.currentElement.setAttribute("y1", point.y);
+                this.currentElement.setAttribute("x2", point.x);
+                this.currentElement.setAttribute("y2", point.y);
+                this.currentElement.setAttribute("stroke", this.colorPicker.value);
+                this.currentElement.setAttribute("stroke-width", this.brushSize.value);
+                break;
+                
+            case 'rect':
+                this.currentElement = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                this.currentElement.setAttribute("fill", this.colorPicker.value);
+                this.currentElement.setAttribute("stroke", this.colorPicker.value);
+                this.currentElement.setAttribute("stroke-width", this.brushSize.value);
+                this.startPoint = point;
+                break;
+                
+            case 'circle':
+                this.currentElement = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                this.currentElement.setAttribute("fill", this.colorPicker.value);
+                this.currentElement.setAttribute("stroke", this.colorPicker.value);
+                this.currentElement.setAttribute("stroke-width", this.brushSize.value);
+                this.startPoint = point;
+                break;
+        }
+        
+        if (this.currentElement) {
+            this.canvas.appendChild(this.currentElement);
+        }
+    }
+
+    continueDrawing(e) {
+        if (!this.isDrawing) return;
+        e.preventDefault();
+        const point = this.getCoordinates(e);
+        
+        switch(this.currentTool) {
+            case 'freehand':
+                const controlPoint = {
+                    x: (this.prevPoint.x + point.x) / 2,
+                    y: (this.prevPoint.y + point.y) / 2
+                };
+                const newPath = `Q ${controlPoint.x} ${controlPoint.y} ${point.x} ${point.y}`;
+                const currentPath = this.currentElement.getAttribute("d");
+                this.currentElement.setAttribute("d", currentPath + " " + newPath);
+                this.prevPoint = point;
+                break;
+                
+            case 'line':
+                this.currentElement.setAttribute("x2", point.x);
+                this.currentElement.setAttribute("y2", point.y);
+                break;
+                
+            case 'rect':
+                const width = point.x - this.startPoint.x;
+                const height = point.y - this.startPoint.y;
+                this.currentElement.setAttribute("x", Math.min(this.startPoint.x, point.x));
+                this.currentElement.setAttribute("y", Math.min(this.startPoint.y, point.y));
+                this.currentElement.setAttribute("width", Math.abs(width));
+                this.currentElement.setAttribute("height", Math.abs(height));
+                break;
+                
+            case 'circle':
+                const radius = Math.sqrt(
+                    Math.pow(point.x - this.startPoint.x, 2) +
+                    Math.pow(point.y - this.startPoint.y, 2)
+                );
+                this.currentElement.setAttribute("cx", this.startPoint.x);
+                this.currentElement.setAttribute("cy", this.startPoint.y);
+                this.currentElement.setAttribute("r", radius);
+                break;
+        }
+    }
+
+    finishDrawing() {
+        this.isDrawing = false;
+        
+        if (this.currentTool === 'line' && this.currentElement) {
+            const x1 = parseFloat(this.currentElement.getAttribute('x1'));
+            const y1 = parseFloat(this.currentElement.getAttribute('y1'));
+            const x2 = parseFloat(this.currentElement.getAttribute('x2'));
+            const y2 = parseFloat(this.currentElement.getAttribute('y2'));
+            
+            if (x1 === x2 && y1 === y2) {
+                this.currentElement.remove();
+            }
+        }
+        
+        this.currentElement = null;
+        this.prevPoint = null;
     }
 
     getCoordinates(e) {
         const rect = this.canvas.getBoundingClientRect();
+        const scaleX = this.canvas.width.baseVal.value / rect.width;
+        const scaleY = this.canvas.height.baseVal.value / rect.height;
+        
+        let clientX, clientY;
+        
+        if (e.touches) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+        
         return {
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
+            x: (clientX - rect.left) * scaleX,
+            y: (clientY - rect.top) * scaleY
         };
     }
 
-    getStrokeColor() {
-        return this.shadowRoot.getElementById('strokeColor').value;
-    }
+    startSelection(e) {
+        this.clearSelection();
+        const point = this.getCoordinates(e);
+        this.startPoint = point;
+        
+        this.selectionRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        this.selectionRect.setAttribute('class', 'selection-rect');
+        this.selectionRect.setAttribute('stroke', '#2196F3');
+        this.selectionRect.setAttribute('fill', 'rgba(33, 150, 243, 0.2)');
+        this.selectionRect.setAttribute('stroke-width', '2');
+        this.selectionRect.setAttribute('stroke-dasharray', '5,5');
+        this.canvas.appendChild(this.selectionRect);
 
-    getFillColor() {
-        return this.shadowRoot.getElementById('fillColor').value;
+        const updateSelection = e => {
+            const current = this.getCoordinates(e);
+            const x = Math.min(this.startPoint.x, current.x);
+            const y = Math.min(this.startPoint.y, current.y);
+            const width = Math.abs(current.x - this.startPoint.x);
+            const height = Math.abs(current.y - this.startPoint.y);
+            
+            this.selectionRect.setAttribute('x', x);
+            this.selectionRect.setAttribute('y', y);
+            this.selectionRect.setAttribute('width', width);
+            this.selectionRect.setAttribute('height', height);
+        };
+
+        const finish = () => {
+            this.canvas.removeEventListener('mousemove', updateSelection);
+            this.canvas.removeEventListener('mouseup', finish);
+            
+            this.selection = {
+                x: parseFloat(this.selectionRect.getAttribute('x')),
+                y: parseFloat(this.selectionRect.getAttribute('y')),
+                width: parseFloat(this.selectionRect.getAttribute('width')),
+                height: parseFloat(this.selectionRect.getAttribute('height'))
+            };
+            
+            if (this.selection.width <= 0 || this.selection.height <= 0) {
+                this.clearSelection();
+            }
+            this.saveState();
+        };
+
+        this.canvas.addEventListener('mousemove', updateSelection);
+        this.canvas.addEventListener('mouseup', finish);
     }
 
     clearCanvas() {
-        while (this.canvas.firstChild) {
-            this.canvas.removeChild(this.canvas.firstChild);
+        this.canvas.innerHTML = '';
+        this.clearSelection();
+        this.saveState();
+    }
+
+    clearSelection() {
+        if (this.selectionRect) {
+            this.selectionRect.remove();
+            this.selection = null;
+            this.selectionRect = null;
         }
-        this.history = [];
     }
 
     exportSVG() {
-        const svgData = new XMLSerializer().serializeToString(this.canvas);
+        const clonedSVG = this.canvas.cloneNode(true);
+        clonedSVG.querySelectorAll('.selection-rect').forEach(el => el.remove());
+        
+        if (this.selection && this.selection.width > 0 && this.selection.height > 0) {
+            const canvasWidth = this.canvas.width.baseVal.value;
+            const canvasHeight = this.canvas.height.baseVal.value;
+            
+            const safeX = Math.max(0, Math.min(this.selection.x, canvasWidth - 1));
+            const safeY = Math.max(0, Math.min(this.selection.y, canvasHeight - 1));
+            const safeWidth = Math.min(canvasWidth - safeX, this.selection.width);
+            const safeHeight = Math.min(canvasHeight - safeY, this.selection.height);
+            
+            clonedSVG.setAttribute('viewBox', `${safeX} ${safeY} ${safeWidth} ${safeHeight}`);
+            clonedSVG.setAttribute('width', safeWidth);
+            clonedSVG.setAttribute('height', safeHeight);
+        } else {
+            clonedSVG.setAttribute('viewBox', `0 0 ${this.canvas.width.baseVal.value} ${this.canvas.height.baseVal.value}`);
+        }
+
+        const svgData = new XMLSerializer().serializeToString(clonedSVG);
         const blob = new Blob([svgData], {type: "image/svg+xml"});
         const url = URL.createObjectURL(blob);
         
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'drawing.svg';
+        a.download = this.selection ? 'selected-area.svg' : 'drawing.svg';
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
         URL.revokeObjectURL(url);
     }
+
+    disconnectedCallback() {
+        document.removeEventListener('keydown', this.handleKeydown);
+    }
+
+    handleKeydown(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+            e.preventDefault();
+            // 只有当组件在文档中时才执行撤销
+            if (document.contains(this)) {
+                this.undo();
+            }
+        }
+    }
 }
+
 
 // 注册自定义元素
 customElements.define('three-editor', ThreeEditor);
