@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>可切换几何体演示（完整版）</title>
+    <style>
+        body { 
+            margin: 0;
+            overflow: hidden;
+        }
+        canvas { 
+            display: block;
+            background: #f0f0f0;
+        }
+        #controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(255,255,255,0.8);
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+        }
+        .geo-btn {
+            margin: 5px;
+            padding: 8px 15px;
+            cursor: pointer;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            background: #f8f8f8;
+        }
+        .active {
+            background: #2196F3;
+            color: white;
+            border-color: #1976D2;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h3>几何体切换</h3>
+        <button class="geo-btn active" data-geo="box">立方体</button>
+        <button class="geo-btn" data-geo="sphere">球体</button>
+        <button class="geo-btn" data-geo="cylinder">圆柱体</button>
+        <p>当前显示：<span id="currentGeo">立方体</span></p>
+        <p>操作提示：左键拖拽旋转物体</p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let scene, camera, renderer;
+        let geometries = {};
+        let selectedObject = null;
+        let isDragging = false;
+        let previousPosition = { x: 0, y: 0 };
+        
+        // 初始化场景
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // 光源设置
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+
+            // 创建几何体
+            geometries.box = createGeometry('box', 0x00ff00);
+            geometries.sphere = createGeometry('sphere', 0xff0000);
+            geometries.cylinder = createGeometry('cylinder', 0x0000ff);
+            
+            // 默认显示
+            showGeometry('box');
+        }
+
+        // 创建几何体
+        function createGeometry(type, color) {
+            let geometry;
+            switch(type) {
+                case 'box':
+                    geometry = new THREE.BoxGeometry(1, 1, 1);
+                    break;
+                case 'sphere':
+                    geometry = new THREE.SphereGeometry(0.8, 32, 32);
+                    break;
+                case 'cylinder':
+                    geometry = new THREE.CylinderGeometry(0.5, 0.5, 1.5, 32);
+                    break;
+            }
+            
+            const material = new THREE.MeshPhongMaterial({ 
+                color: color,
+                specular: 0x111111,
+                shininess: 100
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.visible = false;
+            scene.add(mesh);
+            return mesh;
+        }
+
+        // 显示指定几何体
+        function showGeometry(geoType) {
+            Object.values(geometries).forEach(obj => obj.visible = false);
+            geometries[geoType].visible = true;
+            document.getElementById('currentGeo').textContent = 
+                geoType === 'box' ? '立方体' : 
+                geoType === 'sphere' ? '球体' : '圆柱体';
+        }
+
+        // 设置UI交互
+        function setupUI() {
+            document.querySelectorAll('.geo-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    document.querySelectorAll('.geo-btn').forEach(b => 
+                        b.classList.remove('active'));
+                    btn.classList.add('active');
+                    showGeometry(btn.dataset.geo);
+                    selectedObject = null;
+                });
+            });
+        }
+
+        // 射线检测（仅检测可见物体）
+        function getIntersectedObject(x, y) {
+            const raycaster = new THREE.Raycaster();
+            const mouse = new THREE.Vector2(
+                (x / window.innerWidth) * 2 - 1,
+                -(y / window.innerHeight) * 2 + 1
+            );
+            
+            raycaster.setFromCamera(mouse, camera);
+            const visibleGeometries = Object.values(geometries).filter(obj => obj.visible);
+            const intersects = raycaster.intersectObjects(visibleGeometries);
+            return intersects.length > 0 ? intersects[0].object : null;
+        }
+
+        // 事件监听
+        function setupEventListeners() {
+            // 鼠标事件
+            renderer.domElement.addEventListener('mousedown', (e) => {
+                selectedObject = getIntersectedObject(e.clientX, e.clientY);
+                if (selectedObject) {
+                    isDragging = true;
+                    previousPosition = { x: e.clientX, y: e.clientY };
+                }
+            });
+            
+            document.addEventListener('mousemove', (e) => {
+                if (!isDragging || !selectedObject) return;
+                
+                const deltaX = e.clientX - previousPosition.x;
+                const deltaY = e.clientY - previousPosition.y;
+                
+                selectedObject.rotation.y += deltaX * 0.01;
+                selectedObject.rotation.x += deltaY * 0.01;
+                
+                previousPosition = { x: e.clientX, y: e.clientY };
+            });
+            
+            document.addEventListener('mouseup', () => {
+                isDragging = false;
+            });
+
+            // 窗口大小调整
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        // 动画循环
+        function animate() {
+            requestAnimationFrame(animate);
+            // 呼吸动画
+            Object.values(geometries).forEach(obj => {
+                if (obj.visible) {
+                    obj.position.y = Math.sin(Date.now() * 0.001) * 0.2;
+                }
+            });
+            renderer.render(scene, camera);
+        }
+
+        // 初始化并启动
+        init();
+        setupUI();
+        setupEventListeners();
+        animate();
+    </script>
+</body>
+</html>

@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>3D几何体编辑器组件</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
+</head>
+<body>
+    <!-- 使用自定义组件 -->
+    <three-editor 
+        width="800" 
+        height="600" 
+        initial-size="1.2"
+        style="border: 2px solid #ddd; margin: 20px;"
+    ></three-editor>
+
+<script>
+class ThreeEditor extends HTMLElement {
+    static observedAttributes = ['width', 'height', 'initial-size'];
+    
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+        this._width = 800;
+        this._height = 600;
+        this._initialSize = 1.0;
+        this.objects = [];
+        this.selectedObject = null;
+    }
+
+    connectedCallback() {
+        this.renderUI();
+        this.initThree();
+        this.setupEventListeners();
+    }
+
+    renderUI() {
+        this.shadowRoot.innerHTML = `
+            <style>
+                :host {
+                    display: block;
+                    position: relative;
+                    background: #f0f0f0;
+                }
+                canvas {
+                    width: 100%;
+                    height: 100%;
+                }
+                #ui {
+                    position: absolute;
+                    top: 15px;
+                    left: 15px;
+                    background: rgba(255,255,255,0.95);
+                    padding: 15px;
+                    border-radius: 10px;
+                    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+                }
+                .btn-group {
+                    margin: 8px 0;
+                }
+                button {
+                    padding: 8px 15px;
+                    margin: 4px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    background: white;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+                button:hover {
+                    background: #f8f8f8;
+                }
+                button.active {
+                    background: #4CAF50;
+                    color: white;
+                    border-color: #45a049;
+                }
+                #colorPicker {
+                    width: 100%;
+                    height: 40px;
+                    margin: 10px 0;
+                    cursor: pointer;
+                }
+            </style>
+            <div id="ui">
+                <div class="btn-group">
+                    <button data-shape="cube">立方体</button>
+                    <button data-shape="sphere">球体</button>
+                    <button data-shape="cone">圆锥</button>
+                    <button data-shape="cylinder">圆柱</button>
+                </div>
+                <input type="color" id="colorPicker" value="#ff0000">
+                <div class="btn-group">
+                    <button data-mode="translate" class="active">移动</button>
+                    <button data-mode="rotate">旋转</button>
+                    <button data-mode="scale">缩放</button>
+                    <button id="clearBtn">清除</button>
+                </div>
+            </div>
+        `;
+    }
+
+    initThree() {
+        // 场景初始化
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(75, this._width/this._height, 0.1, 1000);
+        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer.setSize(this._width, this._height);
+        this.shadowRoot.appendChild(this.renderer.domElement);
+
+        // 控制器
+        this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.enableDamping = true;
+
+        // 光照
+        this.scene.add(new THREE.AmbientLight(0x404040));
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(10, 10, 10);
+        this.scene.add(directionalLight);
+
+        // 坐标轴
+        this.scene.add(new THREE.AxesHelper(10));
+
+        // 变换控制器
+        this.transformControl = new THREE.TransformControls(this.camera, this.renderer.domElement);
+        this.scene.add(this.transformControl);
+        this.transformControl.setMode('translate');
+
+        // 相机位置
+        this.camera.position.set(20, 20, 20);
+        this.camera.lookAt(0, 0, 0);
+
+        // 动画循环
+        const animate = () => {
+            requestAnimationFrame(animate);
+            this.controls.update();
+            this.renderer.render(this.scene, this.camera);
+        };
+        animate();
+    }
+
+    setupEventListeners() {
+        // 形状创建
+        this.shadowRoot.querySelectorAll('[data-shape]').forEach(btn => {
+            btn.addEventListener('click', () => this.createShape(btn.dataset.shape));
+        });
+
+        // 模式切换
+        this.shadowRoot.querySelectorAll('[data-mode]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.transformControl.setMode(btn.dataset.mode);
+                this.shadowRoot.querySelectorAll('[data-mode]').forEach(b => 
+                    b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+
+        // 颜色选择
+        this.shadowRoot.querySelector('#colorPicker').addEventListener('input', e => {
+            if (this.selectedObject) {
+                this.selectedObject.material.color.set(e.target.value);
+            }
+        });
+
+        // 清除按钮
+        this.shadowRoot.querySelector('#clearBtn').addEventListener('click', () => this.clearAll());
+
+        // 物体选择
+        this.renderer.domElement.addEventListener('click', e => this.handleObjectClick(e));
+        
+        // 窗口缩放
+        window.addEventListener('resize', () => this.updateSize());
+    }
+
+    createShape(type) {
+        let geometry;
+        const size = this._initialSize;
+        
+        switch(type) {
+            case 'cube':
+                geometry = new THREE.BoxGeometry(size, size, size);
+                break;
+            case 'sphere':
+                geometry = new THREE.SphereGeometry(size/2, 32, 32);
+                break;
+            case 'cone':
+                geometry = new THREE.ConeGeometry(size/2, size*1.5, 32);
+                break;
+            case 'cylinder':
+                geometry = new THREE.CylinderGeometry(size/2, size/2, size*1.5, 32);
+                break;
+        }
+
+        const material = new THREE.MeshPhongMaterial({
+            color: new THREE.Color().setHSL(Math.random(), 0.7, 0.5),
+            transparent: true,
+            opacity: 0.8
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(
+            (Math.random() - 0.5) * 15,
+            (Math.random() - 0.5) * 15,
+            (Math.random() - 0.5) * 15
+        );
+        
+        this.scene.add(mesh);
+        this.objects.push(mesh);
+    }
+
+    handleObjectClick(event) {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+            ((event.clientX - rect.left) / rect.width) * 2 - 1,
+            -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, this.camera);
+
+        const intersects = raycaster.intersectObjects(this.objects);
+        intersects.length > 0 ? this.selectObject(intersects[0].object) : this.deselectObject();
+    }
+
+    selectObject(object) {
+        if (this.selectedObject === object) return;
+        this.deselectObject();
+        
+        this.selectedObject = object;
+        object.material.opacity = 1.0;
+        object.material.needsUpdate = true;
+        this.transformControl.attach(object);
+        this.shadowRoot.querySelector('#colorPicker').value = object.material.color.getHexString();
+    }
+
+    deselectObject() {
+        if (!this.selectedObject) return;
+        
+        this.selectedObject.material.opacity = 0.8;
+        this.selectedObject.material.needsUpdate = true;
+        this.transformControl.detach();
+        this.selectedObject = null;
+    }
+
+    clearAll() {
+        this.objects.forEach(obj => {
+            this.scene.remove(obj);
+            obj.geometry.dispose();
+            obj.material.dispose();
+        });
+        this.objects = [];
+        this.deselectObject();
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (name === 'width') this._width = parseInt(newValue);
+        if (name === 'height') this._height = parseInt(newValue);
+        if (name === 'initial-size') this._initialSize = parseFloat(newValue);
+        this.updateSize();
+    }
+
+    updateSize() {
+        if (this.renderer) {
+            this.renderer.setSize(this._width, this._height);
+            this.camera.aspect = this._width / this._height;
+            this.camera.updateProjectionMatrix();
+        }
+    }
+
+    disconnectedCallback() {
+        this.clearAll();
+        this.renderer.dispose();
+        this.transformControl.dispose();
+        this.controls.dispose();
+    }
+}
+
+// 注册自定义元素
+customElements.define('three-editor', ThreeEditor);
+</script>
+
+</body>
+</html>

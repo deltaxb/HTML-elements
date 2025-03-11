@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>全功能Markdown编辑器</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.5/purify.min.js"></script>
+</head>
+<body>
+    <markdown-editor 
+        theme="split"
+        editor-height="30vh"
+        editor-width="20%"
+        preview-width="30%"
+        button-size="0.5em"
+        height="30vh"
+    >
+        <script type="text/markdown">
+            # 全功能演示
+            左右窗格宽度可通过属性独立控制
+            $$\sum_{i=1}^n i = \frac{n(n+1)}{2}$$
+        </script>
+    </markdown-editor>
+
+    <script>
+        class MarkdownEditor extends HTMLElement {
+            constructor() {
+                super();
+                this.attachShadow({ mode: 'open' });
+                this.history = [];
+                this.historyIndex = -1;
+                
+                this.shadowRoot.innerHTML = `
+                    <style>
+                        :host {
+                            --primary-color: #4a90e2;
+                            --border-color: #e1e4e8;
+                            --editor-bg: #ffffff;
+                            --preview-bg: #fafbfc;
+                            --code-bg: #282c34;
+                            --box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+                            --editor-height: ${this.getAttribute('editor-height') || '500px'};
+                            --editor-width: ${this.getAttribute('editor-width') || '50%'};
+                            --preview-width: ${this.getAttribute('preview-width') || '50%'};
+                            --button-size: ${this.getAttribute('button-size') || '14px'};
+                            font-family: system-ui;
+                            display: block;
+                        }
+
+                        .container {
+                            display: flex;
+                            gap: 20px;
+                            height: ${this.getAttribute('height') || '500px'};
+                            padding: 20px;
+                        }
+
+                        .toolbar {
+                            display: flex;
+                            gap: calc(var(--button-size) * 0.8);
+                            padding: calc(var(--button-size) * 0.7);
+                            border-bottom: 2px solid var(--border-color);
+                            background: var(--editor-bg);
+                            margin-bottom: 20px;
+                        }
+
+                        .toolbar button {
+                            font-size: var(--button-size);
+                            padding: calc(var(--button-size) * 0.5) calc(var(--button-size) * 1);
+                            border: 1px solid var(--border-color);
+                            border-radius: 8px;
+                            background: var(--editor-bg);
+                            cursor: pointer;
+                            transition: all 0.2s;
+                            min-width: calc(var(--button-size) * 4);
+                            color: #5a5a5a;
+                        }
+
+                        .toolbar button:hover {
+                            background: var(--primary-color);
+                            color: white;
+                            transform: translateY(-1px);
+                            box-shadow: var(--box-shadow);
+                        }
+
+                        .editor-pane {
+                            width: var(--editor-width);
+                            height: var(--editor-height);
+                            min-width: 300px;
+                        }
+
+                        .preview-pane {
+                            width: var(--preview-width);
+                            height: var(--editor-height);
+                            min-width: 300px;
+                        }
+
+                        #editor {
+                            width: 100%;
+                            height: 100%;
+                            padding: 20px;
+                            border: 2px solid var(--border-color);
+                            border-radius: 12px;
+                            resize: none;
+                            font-size: var(--editor-font-size, 15px);
+                            line-height: 1.8;
+                            color: #24292e;
+                            transition: all 0.3s ease;
+                            box-shadow: var(--box-shadow);
+                            background: var(--editor-bg);
+                        }
+
+                        #editor:focus {
+                            border-color: var(--primary-color);
+                            box-shadow: 0 0 0 3px rgba(74,144,226,0.1);
+                            outline: none;
+                        }
+
+                        #preview {
+                            width: 100%;
+                            height: 100%;
+                            padding: 30px;
+                            overflow-y: auto;
+                            border: 2px solid var(--border-color);
+                            border-radius: 12px;
+                            font-size: var(--preview-font-size, 16px);
+                            background: var(--preview-bg);
+                            box-shadow: var(--box-shadow);
+                            color: #2d3339;
+                            line-height: 1.7;
+                            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+                        }
+
+                        #preview h1 {
+                            font-size: 2.2em;
+                            border-bottom: 2px solid var(--border-color);
+                            padding-bottom: 0.3em;
+                            margin: 1.5em 0 1em;
+                        }
+
+                        #preview h2 {
+                            font-size: 1.8em;
+                            border-bottom: 1px solid var(--border-color);
+                            padding-bottom: 0.3em;
+                            margin: 1.3em 0 0.8em;
+                        }
+
+                        #preview p {
+                            margin: 0.8em 0;
+                        }
+
+                        #preview code:not(.katex) {
+                            background: var(--code-bg);
+                            color: #abb2bf;
+                            padding: 0.2em 0.4em;
+                            border-radius: 4px;
+                            font-size: 0.95em;
+                        }
+
+                        #preview pre {
+                            background: var(--code-bg) !important;
+                            padding: 15px;
+                            border-radius: 8px;
+                            color: #abb2bf;
+                        }
+
+                        #preview pre code {
+                            display: block;
+                            padding: 1.2em;
+                            border-radius: 8px;
+                            overflow-x: auto;
+                            line-height: 1.5;
+                        }
+
+                        #preview blockquote {
+                            border-left: 4px solid var(--primary-color);
+                            margin: 1em 0;
+                            padding: 0.5em 1em;
+                            background: #f8f9fa;
+                            color: #6a737d;
+                            border-radius: 4px 0 0 4px;
+                        }
+
+                        #preview ul, 
+                        #preview ol {
+                            padding-left: 2em;
+                            margin: 0.8em 0;
+                        }
+
+                        #preview li {
+                            margin: 0.4em 0;
+                        }
+
+                        #preview table {
+                            border-collapse: collapse;
+                            margin: 1.5em 0;
+                            width: 100%;
+                        }
+
+                        #preview th,
+                        #preview td {
+                            border: 1px solid var(--border-color);
+                            padding: 0.6em 1em;
+                        }
+
+                        #preview th {
+                            background: var(--preview-bg);
+                        }
+
+                        .katex { 
+                            font-size: 1.05em !important;
+                        }
+
+                        .katex-error {
+                            background: #fff0f0;
+                            border-radius: 4px;
+                            padding: 6px 10px;
+                            color: #dc3545;
+                            border: 1px dashed rgba(220, 53, 69, 0.3);
+                        }
+                    </style>
+                    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+                    
+                    <div class="toolbar">
+                        <button title="撤销 (Ctrl+Z)" onclick="this.getRootNode().host.undo()">↩️ 撤销</button>
+                        <button title="复制 (Ctrl+C)" onclick="this.getRootNode().host.handleCopy()">⎘ 复制</button>
+                        <button title="粘贴 (Ctrl+V)" onclick="this.getRootNode().host.handlePaste()">📋 粘贴</button>
+                        <button title="放大字体 (Ctrl+Plus)" onclick="this.getRootNode().host.adjustFontSize(1)">➕</button>
+                        <button title="缩小字体 (Ctrl+Minus)" onclick="this.getRootNode().host.adjustFontSize(-1)">➖</button>
+                    </div>
+                    
+                    <div class="container">
+                        <div class="editor-pane">
+                            <textarea id="editor"></textarea>
+                        </div>
+                        <div class="preview-pane">
+                            <div id="preview"></div>
+                        </div>
+                    </div>
+                `;
+
+                this.editor = this.shadowRoot.getElementById('editor');
+                this.preview = this.shadowRoot.getElementById('preview');
+                this._debounceTimer = null;
+            }
+
+            connectedCallback() {
+                this._initializeContent();
+                this._setupMarkdown();
+                this._setupEvents();
+                this._saveHistory();
+            }
+
+            _initializeContent() {
+                const script = this.querySelector('script[type="text/markdown"]');
+                this.editor.value = script ? script.textContent.trim() : '';
+                this._updatePreview();
+            }
+
+            _setupMarkdown() {
+                marked.setOptions({
+                    breaks: true,
+                    highlight: code => Prism.highlight(code, Prism.languages.javascript, 'javascript')
+                });
+            }
+
+            _setupEvents() {
+                this.editor.addEventListener('input', () => {
+                    clearTimeout(this._debounceTimer);
+                    this._debounceTimer = setTimeout(() => {
+                        this._updatePreview();
+                        this._saveHistory();
+                    }, 300);
+                });
+
+                this.editor.addEventListener('keydown', (e) => this._handleKeydown(e));
+                this.editor.addEventListener('paste', (e) => this._handlePaste(e));
+            }
+
+            _handleKeydown(e) {
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                    e.preventDefault();
+                    this.undo();
+                }
+                if ((e.ctrlKey || e.metaKey) && (e.key === '+' || e.key === '=')) {
+                    e.preventDefault();
+                    this.adjustFontSize(1);
+                }
+                if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+                    e.preventDefault();
+                    this.adjustFontSize(-1);
+                }
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+                    setTimeout(() => this._showCopyFeedback(), 100);
+                }
+            }
+
+            async _handlePaste(e) {
+                e.preventDefault();
+                try {
+                    const text = await navigator.clipboard.readText();
+                    this._insertText(text);
+                } catch (err) {
+                    const clipboardData = e.clipboardData || window.clipboardData;
+                    const text = clipboardData.getData('text/plain');
+                    if (text) this._insertText(text);
+                }
+            }
+
+            _updatePreview() {
+                const raw = this.editor.value;
+                const withMath = raw.replace(
+                    /(?<!\\)(\${1,2})((?:\\\$|(?!\1).)+?)\1/g,
+                    (_, delim, content) => `\n<span class="katex${delim.length === 2 ? '-display' : ''}">${content}</span>\n`
+                );
+                this.preview.innerHTML = DOMPurify.sanitize(marked.parse(withMath));
+                this._renderKatex();
+            }
+
+            _renderKatex() {
+                this.preview.querySelectorAll('.katex, .katex-display').forEach(el => {
+                    if (el.hasAttribute('data-rendered')) return;
+                    try {
+                        katex.render(el.textContent, el, {
+                            displayMode: el.classList.contains('katex-display'),
+                            throwOnError: false
+                        });
+                        el.setAttribute('data-rendered', 'true');
+                    } catch (e) {
+                        el.outerHTML = `<span class="katex-error">公式错误: ${e.message.replace('KaTeX parse error: ', '')}</span>`;
+                    }
+                });
+            }
+
+            _saveHistory() {
+                const content = this.editor.value;
+                if (content !== this.history[this.historyIndex]) {
+                    this.history = this.history.slice(0, this.historyIndex + 1);
+                    this.history.push(content);
+                    this.historyIndex++;
+                    if (this.history.length > 100) this.history.shift();
+                }
+            }
+
+            undo() {
+                if (this.historyIndex > 0) {
+                    this.historyIndex--;
+                    this.editor.value = this.history[this.historyIndex];
+                    this._updatePreview();
+                }
+            }
+
+            handleCopy() {
+                this.editor.select();
+                navigator.clipboard.writeText(this.editor.value)
+                    .catch(() => alert('复制失败，请手动操作'));
+            }
+
+            async handlePaste() {
+                try {
+                    const text = await navigator.clipboard.readText();
+                    this._insertText(text);
+                } catch (err) {
+                    alert('粘贴需要用户授权');
+                }
+            }
+
+            _insertText(text) {
+                const start = this.editor.selectionStart;
+                const end = this.editor.selectionEnd;
+                const content = this.editor.value;
+                this.editor.value = content.slice(0, start) + text + content.slice(end);
+                this.editor.selectionStart = this.editor.selectionEnd = start + text.length;
+                this._updatePreview();
+                this._saveHistory();
+            }
+
+            adjustFontSize(step) {
+                let editorSize = parseFloat(getComputedStyle(this.editor).fontSize);
+                editorSize = Math.max(12, Math.min(24, editorSize + step));
+                this.style.setProperty('--editor-font-size', `${editorSize}px`);
+                this.style.setProperty('--preview-font-size', `${editorSize + 2}px`);
+            }
+
+            _showCopyFeedback() {
+                // 可在此处添加更优雅的反馈效果
+            }
+
+            static get observedAttributes() {
+                return ['theme', 'height', 'editor-height', 'editor-width', 'preview-width', 'button-size'];
+            }
+
+            attributeChangedCallback(name, oldVal, newVal) {
+                switch(name) {
+                    case 'theme':
+                        this.shadowRoot.querySelector('.container').style.flexDirection = 
+                            newVal === 'vertical' ? 'column' : 'row';
+                        break;
+                    case 'height':
+                        this.shadowRoot.querySelector('.container').style.height = newVal;
+                        break;
+                    case 'editor-height':
+                        this.style.setProperty('--editor-height', newVal);
+                        break;
+                    case 'editor-width':
+                        this.style.setProperty('--editor-width', newVal);
+                        break;
+                    case 'preview-width':
+                        this.style.setProperty('--preview-width', newVal);
+                        break;
+                    case 'button-size':
+                        this.style.setProperty('--button-size', newVal);
+                        break;
+                }
+            }
+
+            get value() { return this.editor.value; }
+            set value(v) { 
+                this.editor.value = v; 
+                this._updatePreview();
+                this._saveHistory();
+            }
+        }
+
+        customElements.define('markdown-editor', MarkdownEditor);
+    </script>
+</body>
+</html>

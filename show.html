@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>组件演示</title>
+    
+    <!-- Three.js 依赖 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
+    
+    <!-- Markdown 依赖 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.5/purify.min.js"></script>
+    
+    <!-- 自定义组件 -->
+    <script src="my_element.js"></script>
+
+    <style>
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding:20px;
+        }
+        three-editor, markdown-editor {
+            border: 2px solid #eee;
+            border-radius: 8px;
+            padding: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 3D 编辑器 -->
+        <three-editor 
+            width="600" 
+            height="400"
+            initial-size="1.5"
+        ></three-editor>
+
+        <!--Markdown 编辑器 -->
+        <markdown-editor 
+        content="%23%20%E6%AC%A2%E8%BF%8E%E4%BD%BF%E7%94%A8%0A%0A%60%60%60javascript%0Aconsole.log('Hello%20World')%3B%0A%60%60%60"
+        editor-height="600px"
+        theme="horizontal"
+        button-size="16px"
+        style="margin:20px;border:2px solid #eee;border-radius:8px;padding:15px;">
+    </markdown-editor>
+    </div>
+</body>
+</html>

@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>全功能Markdown编辑器</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.5/purify.min.js"></script>
+</head>
+<body>
+    <markdown-editor 
+        theme="split"
+        editor-height="70vh"
+        editor-width="45%"
+        preview-width="55%"
+        button-size="1.1em"
+        height="70vh"
+    >
+        <script type="text/markdown">
+            # 全功能演示
+            左右窗格宽度可通过属性独立控制
+            $$\sum_{i=1}^n i = \frac{n(n+1)}{2}$$
+        </script>
+    </markdown-editor>
+
+    <script>
+        class MarkdownEditor extends HTMLElement {
+            constructor() {
+                super();
+                this.attachShadow({ mode: 'open' });
+                this.history = [];
+                this.historyIndex = -1;
+                
+                this.shadowRoot.innerHTML = `
+                    <style>
+                        :host {
+                            --editor-bg: #fff;
+                            --preview-bg: #f8f9fa;
+                            --border-color: #dee2e6;
+                            --button-bg: #f8f9fa;
+                            --button-hover: #e9ecef;
+                            --editor-height: ${this.getAttribute('editor-height') || '500px'};
+                            --editor-width: ${this.getAttribute('editor-width') || '50%'};
+                            --preview-width: ${this.getAttribute('preview-width') || '50%'};
+                            --button-size: ${this.getAttribute('button-size') || '14px'};
+                            font-family: system-ui;
+                            display: block;
+                        }
+
+                        .container {
+                            display: flex;
+                            gap: 20px;
+                            height: ${this.getAttribute('height') || '500px'};
+                            padding: 20px;
+                        }
+
+                        .toolbar {
+                            display: flex;
+                            gap: calc(var(--button-size) * 0.8);
+                            padding: calc(var(--button-size) * 0.7);
+                            border-bottom: 2px solid var(--border-color);
+                            background: var(--editor-bg);
+                        }
+
+                        .toolbar button {
+                            font-size: var(--button-size);
+                            padding: calc(var(--button-size) * 0.5) calc(var(--button-size) * 1);
+                            border: 1px solid var(--border-color);
+                            border-radius: calc(var(--button-size) * 0.3);
+                            background: var(--button-bg);
+                            cursor: pointer;
+                            transition: all 0.2s;
+                            min-width: calc(var(--button-size) * 4);
+                        }
+
+                        .editor-pane {
+                            width: var(--editor-width);
+                            height: var(--editor-height);
+                            min-width: 300px;
+                        }
+
+                        .preview-pane {
+                            width: var(--preview-width);
+                            height: var(--editor-height);
+                            min-width: 300px;
+                        }
+
+                        #editor {
+                            width: 100%;
+                            height: 100%;
+                            padding: 15px;
+                            border: 2px solid var(--border-color);
+                            border-radius: 8px;
+                            resize: none;
+                            font-size: var(--editor-font-size, 14px);
+                            line-height: 1.6;
+                        }
+
+                        #preview {
+                            width: 100%;
+                            height: 100%;
+                            padding: 20px;
+                            overflow-y: auto;
+                            border: 2px solid var(--border-color);
+                            border-radius: 8px;
+                            font-size: var(--preview-font-size, 16px);
+                        }
+
+                        .katex { font-size: 1.1em; }
+                        .katex-display { margin: 1em 0; }
+                        .katex-error {
+                            color: #dc3545;
+                            border: 1px dashed rgba(220, 53, 69, 0.3);
+                            padding: 2px 4px;
+                            background: #fff5f5;
+                        }
+
+                        pre {
+                            background: #282c34 !important;
+                            padding: 15px;
+                            border-radius: 6px;
+                            color: #abb2bf;
+                        }
+                    </style>
+                    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+                    
+                    <div class="toolbar">
+                        <button title="撤销" onclick="this.getRootNode().host.undo()">↩️ 撤销</button>
+                        <button title="复制" onclick="this.getRootNode().host.handleCopy()">📋 复制</button>
+                        <button title="粘贴" onclick="this.getRootNode().host.handlePaste()">📌 粘贴</button>
+                        <button title="放大" onclick="this.getRootNode().host.adjustFontSize(1)">🔍+</button>
+                        <button title="缩小" onclick="this.getRootNode().host.adjustFontSize(-1)">🔍-</button>
+                    </div>
+                    
+                    <div class="container">
+                        <div class="editor-pane">
+                            <textarea id="editor"></textarea>
+                        </div>
+                        <div class="preview-pane">
+                            <div id="preview"></div>
+                        </div>
+                    </div>
+                `;
+
+                this.editor = this.shadowRoot.getElementById('editor');
+                this.preview = this.shadowRoot.getElementById('preview');
+                this._debounceTimer = null;
+            }
+
+            connectedCallback() {
+                this._initializeContent();
+                this._setupMarkdown();
+                this._setupEvents();
+                this._saveHistory();
+            }
+
+            _initializeContent() {
+                const script = this.querySelector('script[type="text/markdown"]');
+                this.editor.value = script ? script.textContent.trim() : '';
+                this._updatePreview();
+            }
+
+            _setupMarkdown() {
+                marked.setOptions({
+                    breaks: true,
+                    highlight: code => Prism.highlight(code, Prism.languages.javascript, 'javascript')
+                });
+            }
+
+            _setupEvents() {
+                this.editor.addEventListener('input', () => {
+                    clearTimeout(this._debounceTimer);
+                    this._debounceTimer = setTimeout(() => {
+                        this._updatePreview();
+                        this._saveHistory();
+                    }, 300);
+                });
+            }
+
+            _updatePreview() {
+                const raw = this.editor.value;
+                const withMath = raw.replace(
+                    /(?<!\\)(\${1,2})((?:\\\$|(?!\1).)+?)\1/g,
+                    (_, delim, content) => `\n<span class="katex${delim.length === 2 ? '-display' : ''}">${content}</span>\n`
+                );
+                this.preview.innerHTML = DOMPurify.sanitize(marked.parse(withMath));
+                this._renderKatex();
+            }
+
+            _renderKatex() {
+                this.preview.querySelectorAll('.katex, .katex-display').forEach(el => {
+                    if (el.hasAttribute('data-rendered')) return;
+                    try {
+                        katex.render(el.textContent, el, {
+                            displayMode: el.classList.contains('katex-display'),
+                            throwOnError: false
+                        });
+                        el.setAttribute('data-rendered', 'true');
+                    } catch (e) {
+                        el.outerHTML = `<span class="katex-error">公式错误: ${e.message.replace('KaTeX parse error: ', '')}</span>`;
+                    }
+                });
+            }
+
+            _saveHistory() {
+                const content = this.editor.value;
+                if (content !== this.history[this.historyIndex]) {
+                    this.history = this.history.slice(0, this.historyIndex + 1);
+                    this.history.push(content);
+                    this.historyIndex++;
+                    if (this.history.length > 100) this.history.shift();
+                }
+            }
+
+            undo() {
+                if (this.historyIndex > 0) {
+                    this.historyIndex--;
+                    this.editor.value = this.history[this.historyIndex];
+                    this._updatePreview();
+                }
+            }
+
+            handleCopy() {
+                this.editor.select();
+                navigator.clipboard.writeText(this.editor.value)
+                    .then(() => alert('已复制到剪贴板'))
+                    .catch(() => alert('复制失败，请手动操作'));
+            }
+
+            async handlePaste() {
+                try {
+                    const text = await navigator.clipboard.readText();
+                    this._insertText(text);
+                } catch (err) {
+                    alert('粘贴需要用户授权');
+                }
+            }
+
+            _insertText(text) {
+                const start = this.editor.selectionStart;
+                const end = this.editor.selectionEnd;
+                const content = this.editor.value;
+                this.editor.value = content.slice(0, start) + text + content.slice(end);
+                this.editor.selectionStart = this.editor.selectionEnd = start + text.length;
+                this._updatePreview();
+                this._saveHistory();
+            }
+
+            adjustFontSize(step) {
+                let editorSize = parseFloat(getComputedStyle(this.editor).fontSize);
+                editorSize = Math.max(12, Math.min(24, editorSize + step));
+        
+                // 仅修改字体相关变量（移除按钮尺寸调整）
+                this.style.setProperty('--editor-font-size', `${editorSize}px`);
+                this.style.setProperty('--preview-font-size', `${editorSize + 2}px`);
+            }
+
+            static get observedAttributes() {
+                return ['theme', 'height', 'editor-height', 'editor-width', 'preview-width', 'button-size'];
+            }
+
+            attributeChangedCallback(name, oldVal, newVal) {
+                switch(name) {
+                    case 'theme':
+                        this.shadowRoot.querySelector('.container').style.flexDirection = 
+                            newVal === 'vertical' ? 'column' : 'row';
+                        break;
+                    case 'height':
+                        this.shadowRoot.querySelector('.container').style.height = newVal;
+                        break;
+                    case 'editor-height':
+                        this.style.setProperty('--editor-height', newVal);
+                        break;
+                    case 'editor-width':
+                        this.style.setProperty('--editor-width', newVal);
+                        break;
+                    case 'preview-width':
+                        this.style.setProperty('--preview-width', newVal);
+                        break;
+                    case 'button-size':
+                        this.style.setProperty('--button-size', newVal);
+                        break;
+                }
+            }
+
+            get value() { return this.editor.value; }
+            set value(v) { 
+                this.editor.value = v; 
+                this._updatePreview();
+                this._saveHistory();
+            }
+        }
+
+        customElements.define('markdown-editor', MarkdownEditor);
+    </script>
+</body>
+</html>
