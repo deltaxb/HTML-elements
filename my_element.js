@@ -671,7 +671,7 @@ class SVGExporter extends HTMLElement {
         super();
         this.attachShadow({ mode: 'open' });
         
-        // 扩展样式
+        // 样式
         const style = document.createElement('style');
         style.textContent = `
             :host {
@@ -724,9 +724,12 @@ class SVGExporter extends HTMLElement {
             input[type="range"] {
                 width: 100px;
             }
+            #undoBtn {
+                background-color: #ff9800;
+            }
         `;
 
-        // 增强的工具栏结构
+        // 工具栏结构
         const template = document.createElement('template');
         template.innerHTML = `
             <div class="toolbar">
@@ -747,6 +750,7 @@ class SVGExporter extends HTMLElement {
                     <span id="strokeWidthValue">3px</span>
                 </div>
                 <div class="tool-group">
+                    <button id="undoBtn" title="撤销 (Ctrl+Z)">↩️ 撤销</button>
                     <button id="clearCanvas">清空</button>
                     <button id="exportSVG">导出SVG</button>
                 </div>
@@ -762,6 +766,7 @@ class SVGExporter extends HTMLElement {
         this.startPoint = null;
         this.currentMode = 'select';
         this.isDrawing = false;
+        this.history = [];
     }
 
     connectedCallback() {
@@ -777,7 +782,8 @@ class SVGExporter extends HTMLElement {
                 `${this.strokeWidth.value}px`;
         });
 
-        // 其他事件
+        // 按钮事件
+        this.shadowRoot.getElementById('undoBtn').addEventListener('click', () => this.undo());
         this.shadowRoot.getElementById('clearCanvas').addEventListener('click', () => this.clearCanvas());
         this.shadowRoot.getElementById('exportSVG').addEventListener('click', () => this.exportSVG());
 
@@ -786,6 +792,9 @@ class SVGExporter extends HTMLElement {
         this.canvas.addEventListener('mousemove', e => this.draw(e));
         this.canvas.addEventListener('mouseup', () => this.finishDrawing());
         this.canvas.addEventListener('mouseleave', () => this.finishDrawing());
+
+        // 键盘事件
+        document.addEventListener('keydown', e => this.handleKeyDown(e));
     }
 
     setMode(mode) {
@@ -845,15 +854,21 @@ class SVGExporter extends HTMLElement {
         if (!this.isDrawing) return;
         this.isDrawing = false;
         
-        // 箭头处理
+        let elements = [];
+        if (this.currentShape) elements.push(this.currentShape);
+        
         if (this.currentMode === 'arrow' && this.currentShape) {
-            this.addArrowhead();
+            const marker = this.addArrowhead();
+            elements.push(marker);
+        }
+        
+        if (elements.length > 0) {
+            this.history.push({ elements });
         }
         
         this.currentShape = null;
     }
 
-    // 创建基础形状
     createPath() {
         this.currentShape = document.createElementNS("http://www.w3.org/2000/svg", "path");
         this.currentShape.setAttribute("fill", "none");
@@ -884,7 +899,6 @@ class SVGExporter extends HTMLElement {
         this.canvas.appendChild(this.currentShape);
     }
 
-    // 更新各种形状
     updatePath(point) {
         const d = this.currentShape.getAttribute("d");
         this.currentShape.setAttribute("d", `${d} L ${point.x} ${point.y}`);
@@ -913,7 +927,6 @@ class SVGExporter extends HTMLElement {
         this.currentShape.setAttribute("ry", Math.abs(height/2));
     }
 
-    // 添加箭头标记
     addArrowhead() {
         const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
         marker.setAttribute("id", "arrowhead");
@@ -930,9 +943,27 @@ class SVGExporter extends HTMLElement {
         
         this.canvas.appendChild(marker);
         this.currentShape.setAttribute("marker-end", "url(#arrowhead)");
+        return marker;
     }
 
-    // 辅助方法
+    handleKeyDown(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+            e.preventDefault();
+            this.undo();
+        }
+    }
+
+    undo() {
+        if (this.history.length > 0) {
+            const lastStep = this.history.pop();
+            lastStep.elements.forEach(element => {
+                if (element.parentNode) {
+                    element.parentNode.removeChild(element);
+                }
+            });
+        }
+    }
+
     getCoordinates(e) {
         const rect = this.canvas.getBoundingClientRect();
         return {
@@ -953,6 +984,7 @@ class SVGExporter extends HTMLElement {
         while (this.canvas.firstChild) {
             this.canvas.removeChild(this.canvas.firstChild);
         }
+        this.history = [];
     }
 
     exportSVG() {
