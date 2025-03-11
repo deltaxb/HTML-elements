@@ -1,25 +1,33 @@
+// ThreeEditor: 一个使用 Three.js 的 3D 对象编辑器
 class ThreeEditor extends HTMLElement {
+    // 定义当属性变化时会触发 attributeChangedCallback 的属性
     static observedAttributes = ['width', 'height', 'initial-size'];
     
     constructor() {
         super();
+        // 创建 Shadow DOM 以实现封装
         this.attachShadow({ mode: 'open' });
+        // 设置默认宽度、高度和初始大小
         this._width = 800;
         this._height = 600;
         this._initialSize = 1.0;
+        // 存储所有创建的对象并跟踪当前选中对象
         this.objects = [];
         this.selectedObject = null;
     }
 
+    // 当元素被添加到 DOM 时调用
     connectedCallback() {
-        this.renderUI();
-        this.initThree();
-        this.setupEventListeners();
+        this.renderUI();        // 设置 HTML 和 CSS 界面
+        this.initThree();       // 初始化 Three.js 场景
+        this.setupEventListeners();  // 添加交互事件监听
     }
 
+    // 在 Shadow DOM 中渲染用户界面控件
     renderUI() {
         this.shadowRoot.innerHTML = `
             <style>
+                /* 宿主元素样式 */
                 :host {
                     display: block;
                     position: relative;
@@ -30,6 +38,7 @@ class ThreeEditor extends HTMLElement {
                     width: 100%;
                     height: 100%;
                 }
+                /* 控制面板样式 */
                 #ui {
                     position: absolute;
                     top: 10px;
@@ -74,6 +83,7 @@ class ThreeEditor extends HTMLElement {
                     margin: 8px 0;
                     cursor: pointer;
                 }
+                /* 小屏幕的响应式设计 */
                 @media (max-width: 480px) {
                     #ui {
                         top: 5px;
@@ -89,13 +99,16 @@ class ThreeEditor extends HTMLElement {
                 }
             </style>
             <div id="ui">
+                <!-- 创建形状的按钮 -->
                 <div class="btn-group">
                     <button data-shape="cube">立方体</button>
                     <button data-shape="sphere">球体</button>
                     <button data-shape="cone">圆锥</button>
                     <button data-shape="cylinder">圆柱</button>
                 </div>
+                <!-- 颜色选择器，用于选中对象的颜色调整 -->
                 <input type="color" id="colorPicker" value="#ff0000">
+                <!-- 变换模式按钮 -->
                 <div class="btn-group">
                     <button data-mode="translate" class="active">移动</button>
                     <button data-mode="rotate">旋转</button>
@@ -106,39 +119,42 @@ class ThreeEditor extends HTMLElement {
         `;
     }
 
+    // 初始化 Three.js 场景和相关组件
     initThree() {
-        // 场景初始化
+        // 创建场景
         this.scene = new THREE.Scene();
+        // 设置相机
         this.camera = new THREE.PerspectiveCamera(75, this._width/this._height, 0.1, 1000);
+        // 初始化渲染器
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
         this.renderer.setSize(this._width, this._height);
         this.shadowRoot.appendChild(this.renderer.domElement);
 
-        // 轨道控制器
+        // 添加轨道控制器以实现相机移动
         this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
 
-        // 光照系统
+        // 添加光照
         this.scene.add(new THREE.AmbientLight(0x404040));
         const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
         directionalLight.position.set(10, 10, 10);
         this.scene.add(directionalLight);
 
-        // 变换控制器
+        // 设置变换控制器
         this.transformControl = new THREE.TransformControls(this.camera, this.renderer.domElement);
         this.scene.add(this.transformControl);
         this.transformControl.setMode('translate');
         this.transformControl.setSpace('world');
 
-        // 关键修改：添加拖动事件监听
+        // 在拖动时禁用轨道控制器
         this.transformControl.addEventListener('dragging-changed', (event) => {
             this.controls.enabled = !event.value;
         });
 
-        // 坐标辅助线
+        // 添加坐标轴辅助线
         this.scene.add(new THREE.AxesHelper(10));
 
-        // 相机初始位置
+        // 设置初始相机位置
         this.camera.position.set(20, 20, 20);
         this.camera.lookAt(0, 0, 0);
 
@@ -151,13 +167,14 @@ class ThreeEditor extends HTMLElement {
         animate();
     }
 
+    // 设置用户界面交互的事件监听器
     setupEventListeners() {
-        // 形状创建
+        // 形状创建按钮
         this.shadowRoot.querySelectorAll('[data-shape]').forEach(btn => {
             btn.addEventListener('click', () => this.createShape(btn.dataset.shape));
         });
 
-        // 模式切换
+        // 变换模式切换按钮
         this.shadowRoot.querySelectorAll('[data-mode]').forEach(btn => {
             btn.addEventListener('click', () => {
                 this.transformControl.setMode(btn.dataset.mode);
@@ -167,7 +184,7 @@ class ThreeEditor extends HTMLElement {
             });
         });
 
-        // 颜色选择
+        // 颜色选择器变化事件
         this.shadowRoot.querySelector('#colorPicker').addEventListener('input', e => {
             if (this.selectedObject) {
                 this.selectedObject.material.color.set(e.target.value);
@@ -177,17 +194,19 @@ class ThreeEditor extends HTMLElement {
         // 清除按钮
         this.shadowRoot.querySelector('#clearBtn').addEventListener('click', () => this.clearAll());
 
-        // 物体选择
+        // 通过点击选择物体
         this.renderer.domElement.addEventListener('click', e => this.handleObjectClick(e));
         
-        // 窗口缩放
+        // 窗口大小调整事件
         window.addEventListener('resize', () => this.updateSize());
     }
 
+    // 根据类型创建新的 3D 形状
     createShape(type) {
         let geometry;
         const size = this._initialSize;
         
+        // 根据形状类型定义几何体
         switch(type) {
             case 'cube':
                 geometry = new THREE.BoxGeometry(size, size, size);
@@ -203,12 +222,14 @@ class ThreeEditor extends HTMLElement {
                 break;
         }
 
+        // 创建带有随机颜色的材质
         const material = new THREE.MeshPhongMaterial({
             color: new THREE.Color().setHSL(Math.random(), 0.7, 0.5),
             transparent: true,
             opacity: 0.8
         });
 
+        // 创建网格并随机定位
         const mesh = new THREE.Mesh(geometry, material);
         mesh.position.set(
             (Math.random() - 0.5) * 15,
@@ -220,6 +241,7 @@ class ThreeEditor extends HTMLElement {
         this.objects.push(mesh);
     }
 
+    // 通过射线投射处理对象选择
     handleObjectClick(event) {
         const rect = this.renderer.domElement.getBoundingClientRect();
         const mouse = new THREE.Vector2(
@@ -234,6 +256,7 @@ class ThreeEditor extends HTMLElement {
         intersects.length > 0 ? this.selectObject(intersects[0].object) : this.deselectObject();
     }
 
+    // 选择对象以进行变换
     selectObject(object) {
         if (this.selectedObject === object) return;
         this.deselectObject();
@@ -246,6 +269,7 @@ class ThreeEditor extends HTMLElement {
         this.shadowRoot.querySelector('#colorPicker').value = object.material.color.getHexString();
     }
 
+    // 取消当前对象的选择
     deselectObject() {
         if (!this.selectedObject) return;
         
@@ -255,6 +279,7 @@ class ThreeEditor extends HTMLElement {
         this.selectedObject = null;
     }
 
+    // 从场景中清除所有对象
     clearAll() {
         this.objects.forEach(obj => {
             this.scene.remove(obj);
@@ -265,6 +290,7 @@ class ThreeEditor extends HTMLElement {
         this.deselectObject();
     }
 
+    // 处理属性变化
     attributeChangedCallback(name, oldValue, newValue) {
         if (name === 'width') this._width = parseInt(newValue);
         if (name === 'height') this._height = parseInt(newValue);
@@ -272,6 +298,7 @@ class ThreeEditor extends HTMLElement {
         this.updateSize();
     }
 
+    // 更新渲染器和相机大小
     updateSize() {
         if (this.renderer) {
             this.renderer.setSize(this._width, this._height);
@@ -280,6 +307,7 @@ class ThreeEditor extends HTMLElement {
         }
     }
 
+    // 元素移除时的清理工作
     disconnectedCallback() {
         this.clearAll();
         this.renderer.dispose();
@@ -288,18 +316,22 @@ class ThreeEditor extends HTMLElement {
     }
 }
 
+// MarkdownEditor: 一个带有实时预览的 Markdown 编辑器
 class MarkdownEditor extends HTMLElement {
     static observedAttributes = ['content', 'theme', 'height', 'editor-height', 'editor-width', 'preview-width', 'button-size'];
     
     constructor() {
         super();
         this.attachShadow({ mode: 'open' });
+        // 用于撤销功能的历史记录
         this.history = [];
         this.historyIndex = -1;
         
+        // 初始 HTML 结构
         this.shadowRoot.innerHTML = `
             <style>
                 :host {
+                    /* 用于主题的自定义属性 */
                     --primary-color: #4a90e2;
                     --border-color: #e1e4e8;
                     --editor-bg: #ffffff;
@@ -397,6 +429,7 @@ class MarkdownEditor extends HTMLElement {
                     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
                 }
 
+                /* Markdown 样式 */
                 #preview h1 {
                     font-size: 2.2em;
                     border-bottom: 2px solid var(--border-color);
@@ -455,8 +488,10 @@ class MarkdownEditor extends HTMLElement {
                     border: 1px dashed rgba(220, 53, 69, 0.3);
                 }
             </style>
+            <!-- 加载 KaTeX 用于数学公式渲染 -->
             <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
             
+            <!-- 工具栏，包含基本编辑控制 -->
             <div class="toolbar">
                 <button title="撤销 (Ctrl+Z)" onclick="this.getRootNode().host.undo()">↩️ 撤销</button>
                 <button title="复制 (Ctrl+C)" onclick="this.getRootNode().host.handleCopy()">⎘ 复制</button>
@@ -465,6 +500,7 @@ class MarkdownEditor extends HTMLElement {
                 <button title="缩小字体 (Ctrl+Minus)" onclick="this.getRootNode().host.adjustFontSize(-1)">➖</button>
             </div>
             
+            <!-- 编辑器和预览的分栏视图 -->
             <div class="container">
                 <div class="editor-pane">
                     <textarea id="editor"></textarea>
@@ -475,11 +511,13 @@ class MarkdownEditor extends HTMLElement {
             </div>
         `;
 
+        // 存储编辑器和预览元素的引用
         this.editor = this.shadowRoot.getElementById('editor');
         this.preview = this.shadowRoot.getElementById('preview');
         this._debounceTimer = null;
     }
 
+    // 当元素被添加到 DOM 时初始化
     connectedCallback() {
         this._initializeContent();
         this._setupMarkdown();
@@ -487,11 +525,11 @@ class MarkdownEditor extends HTMLElement {
         this._saveHistory();
     }
 
+    // 从属性或脚本标签设置初始内容
     _initializeContent() {
         const presetContent = this.getAttribute('content');
         const scriptContent = this.querySelector('script[type="text/markdown"]')?.textContent.trim();
         
-        // 解码并设置内容
         this.editor.value = presetContent ? 
             this._safeDecode(presetContent) : 
             (scriptContent || '');
@@ -499,6 +537,7 @@ class MarkdownEditor extends HTMLElement {
         this._updatePreview();
     }
 
+    // 安全解码 URI 内容
     _safeDecode(content) {
         try {
             return decodeURIComponent(content);
@@ -507,6 +546,7 @@ class MarkdownEditor extends HTMLElement {
         }
     }
 
+    // 配置 Markdown 解析器
     _setupMarkdown() {
         marked.setOptions({
             breaks: true,
@@ -514,7 +554,9 @@ class MarkdownEditor extends HTMLElement {
         });
     }
 
+    // 设置事件处理程序
     _setupEvents() {
+        // 输入事件处理，延迟更新预览
         this.editor.addEventListener('input', () => {
             clearTimeout(this._debounceTimer);
             this._debounceTimer = setTimeout(() => {
@@ -527,6 +569,7 @@ class MarkdownEditor extends HTMLElement {
         this.editor.addEventListener('paste', (e) => this._handlePaste(e));
     }
 
+    // 处理键盘快捷键
     _handleKeydown(e) {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
             e.preventDefault();
@@ -542,6 +585,7 @@ class MarkdownEditor extends HTMLElement {
         }
     }
 
+    // 处理粘贴事件，使用剪贴板 API
     async _handlePaste(e) {
         e.preventDefault();
         try {
@@ -554,6 +598,7 @@ class MarkdownEditor extends HTMLElement {
         }
     }
 
+    // 更新预览区域，渲染 Markdown 内容
     _updatePreview() {
         const raw = this.editor.value;
         const withMath = raw.replace(
@@ -564,6 +609,7 @@ class MarkdownEditor extends HTMLElement {
         this._renderKatex();
     }
 
+    // 使用 KaTeX 渲染数学公式
     _renderKatex() {
         this.preview.querySelectorAll('.katex, .katex-display').forEach(el => {
             if (el.hasAttribute('data-rendered')) return;
@@ -579,6 +625,7 @@ class MarkdownEditor extends HTMLElement {
         });
     }
 
+    // 保存当前状态到历史记录
     _saveHistory() {
         const content = this.editor.value;
         if (content !== this.history[this.historyIndex]) {
@@ -589,6 +636,7 @@ class MarkdownEditor extends HTMLElement {
         }
     }
 
+    // 撤销上一次更改
     undo() {
         if (this.historyIndex > 0) {
             this.historyIndex--;
@@ -597,12 +645,14 @@ class MarkdownEditor extends HTMLElement {
         }
     }
 
+    // 将编辑器内容复制到剪贴板
     handleCopy() {
         this.editor.select();
         navigator.clipboard.writeText(this.editor.value)
             .catch(() => alert('复制失败，请手动操作'));
     }
 
+    // 从剪贴板粘贴内容
     async handlePaste() {
         try {
             const text = await navigator.clipboard.readText();
@@ -612,6 +662,7 @@ class MarkdownEditor extends HTMLElement {
         }
     }
 
+    // 在光标位置插入文本
     _insertText(text) {
         const start = this.editor.selectionStart;
         const end = this.editor.selectionEnd;
@@ -622,6 +673,7 @@ class MarkdownEditor extends HTMLElement {
         this._saveHistory();
     }
 
+    // 调整编辑器和预览的字体大小
     adjustFontSize(step) {
         let editorSize = parseFloat(getComputedStyle(this.editor).fontSize);
         editorSize = Math.max(12, Math.min(24, editorSize + step));
@@ -629,6 +681,7 @@ class MarkdownEditor extends HTMLElement {
         this.style.setProperty('--preview-font-size', `${editorSize + 2}px`);
     }
 
+    // 处理属性变化
     attributeChangedCallback(name, oldVal, newVal) {
         switch(name) {
             case 'content':
@@ -658,6 +711,7 @@ class MarkdownEditor extends HTMLElement {
         }
     }
 
+    // 获取和设置编辑器内容的 getter 和 setter
     get value() { return this.editor.value; }
     set value(v) { 
         this.editor.value = v; 
@@ -666,6 +720,7 @@ class MarkdownEditor extends HTMLElement {
     }
 }
 
+// SVGExporter: 一个支持导出功能的 SVG 绘图工具
 class SVGExporter extends HTMLElement {
     static get observedAttributes() {
         return ['canvas-width', 'canvas-height', 'default-tool'];
@@ -675,7 +730,7 @@ class SVGExporter extends HTMLElement {
         super();
         this.attachShadow({ mode: 'open' });
         
-        // 初始化属性默认值
+        // 默认属性值
         this._canvasWidth = 800;
         this._canvasHeight = 600;
         this.currentTool = 'freehand';
@@ -744,7 +799,7 @@ class SVGExporter extends HTMLElement {
             }
         `;
 
-        // HTML结构
+        // HTML 模板
         const template = document.createElement('template');
         template.innerHTML = `
             <div class="toolbar">
@@ -775,7 +830,7 @@ class SVGExporter extends HTMLElement {
         this.brushSize = this.shadowRoot.getElementById('brushSize');
         this.modeIndicator = this.shadowRoot.getElementById('modeIndicator');
         
-        // 状态初始化
+        // 绘图状态
         this.isDrawing = false;
         this.currentElement = null;
         this.mode = 'draw';
@@ -784,11 +839,10 @@ class SVGExporter extends HTMLElement {
         this.startPoint = null;
         this.prevPoint = null;
         
-        // 绑定上下文
         this.handleKeydown = this.handleKeydown.bind(this);
     }
 
-    // 属性变化回调
+    // 处理属性变化
     attributeChangedCallback(name, oldValue, newValue) {
         if (oldValue === newValue) return;
         
@@ -810,15 +864,15 @@ class SVGExporter extends HTMLElement {
         }
     }
 
+    // 当元素被添加到 DOM 时初始化
     connectedCallback() {
-        // 初始化属性值
         this._canvasWidth = parseInt(this.getAttribute('canvas-width')) || 800;
         this._canvasHeight = parseInt(this.getAttribute('canvas-height')) || 600;
         this.currentTool = this.getAttribute('default-tool') || 'freehand';
         this.updateCanvasSize();
         this.updateToolSelect();
 
-        // 事件监听
+        // 事件监听器
         this.shadowRoot.getElementById('toggleMode').addEventListener('click', () => this.toggleMode());
         this.shadowRoot.getElementById('clearCanvas').addEventListener('click', () => this.clearCanvas());
         this.shadowRoot.getElementById('exportSVG').addEventListener('click', () => this.exportSVG());
@@ -856,20 +910,22 @@ class SVGExporter extends HTMLElement {
         this.saveState();
     }
 
+    // 当元素从 DOM 中移除时清理
     disconnectedCallback() {
         document.removeEventListener('keydown', this.handleKeydown);
     }
 
+    // 更新画布尺寸
     updateCanvasSize() {
         this.canvas.setAttribute('width', this._canvasWidth);
         this.canvas.setAttribute('height', this._canvasHeight);
         
-        // 更新坐标转换比例
         const rect = this.canvas.getBoundingClientRect();
         this.scaleX = this.canvas.width.baseVal.value / rect.width;
         this.scaleY = this.canvas.height.baseVal.value / rect.height;
     }
 
+    // 同步工具选择下拉菜单
     updateToolSelect() {
         const toolSelect = this.shadowRoot.getElementById('toolSelect');
         if (toolSelect) {
@@ -877,7 +933,7 @@ class SVGExporter extends HTMLElement {
         }
     }
 
-    // 以下是原有功能方法（保持完整实现）
+    // 保存当前状态以便撤销
     saveState() {
         const snapshot = {
             elements: Array.from(this.canvas.children).map(el => el.cloneNode(true)),
@@ -889,6 +945,7 @@ class SVGExporter extends HTMLElement {
         this.updateUndoButton();
     }
 
+    // 撤销上一次操作
     undo() {
         if(this.undoStack.length < 2) return;
         this.redoStack.push(this.undoStack.pop());
@@ -896,6 +953,7 @@ class SVGExporter extends HTMLElement {
         this.updateUndoButton();
     }
 
+    // 恢复之前的状态
     restoreState(state) {
         this.canvas.innerHTML = '';
         state.elements.forEach(el => this.canvas.appendChild(el));
@@ -903,10 +961,12 @@ class SVGExporter extends HTMLElement {
         this.selectionRect = this.canvas.querySelector('.selection-rect');
     }
 
+    // 更新撤销按钮状态
     updateUndoButton() {
         this.shadowRoot.getElementById('undoBtn').disabled = this.undoStack.length < 2;
     }
 
+    // 处理键盘快捷键
     handleKeydown(e) {
         if ((e.ctrlKey || e.metaKey) && e.key === 'z' && document.contains(this)) {
             e.preventDefault();
@@ -914,6 +974,7 @@ class SVGExporter extends HTMLElement {
         }
     }
 
+    // 在绘图和选择模式之间切换
     toggleMode() {
         this.mode = this.mode === 'draw' ? 'select' : 'draw';
         this.modeIndicator.className = `mode-indicator ${this.mode}-mode`;
@@ -921,10 +982,12 @@ class SVGExporter extends HTMLElement {
         this.clearSelection();
     }
 
+    // 处理交互开始
     handleStart(e) {
         this.mode === 'draw' ? this.startDrawingMode(e) : this.startSelection(e);
     }
 
+    // 开始绘图模式
     startDrawingMode(e) {
         if (this.currentTool === 'freehand') {
             this.startFreehand(e);
@@ -933,6 +996,7 @@ class SVGExporter extends HTMLElement {
         }
     }
 
+    // 开始自由绘制
     startFreehand(e) {
         const point = this.getCoordinates(e);
         this.currentElement = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -948,6 +1012,7 @@ class SVGExporter extends HTMLElement {
         this.prevPoint = point;
     }
 
+    // 开始绘制预定义形状
     startShapeDrawing(e) {
         const point = this.getCoordinates(e);
         this.startPoint = point;
@@ -963,6 +1028,7 @@ class SVGExporter extends HTMLElement {
         this.isDrawing = true;
     }
 
+    // 创建 SVG 线条元素
     createLineElement(point) {
         const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
         line.setAttribute('x1', point.x);
@@ -974,6 +1040,7 @@ class SVGExporter extends HTMLElement {
         return line;
     }
 
+    // 创建 SVG 矩形元素
     createRectElement() {
         const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
         rect.style.fill = this.colorPicker.value;
@@ -982,6 +1049,7 @@ class SVGExporter extends HTMLElement {
         return rect;
     }
 
+    // 创建 SVG 圆形元素
     createCircleElement() {
         const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         circle.style.fill = this.colorPicker.value;
@@ -990,6 +1058,7 @@ class SVGExporter extends HTMLElement {
         return circle;
     }
 
+    // 处理鼠标/触摸移动
     handleMove(e) {
         if (!this.isDrawing) return;
         const point = this.getCoordinates(e);
@@ -1001,6 +1070,7 @@ class SVGExporter extends HTMLElement {
         }
     }
 
+    // 绘制自由路径
     drawFreehand(point) {
         const controlPoint = {
             x: (this.prevPoint.x + point.x) / 2,
@@ -1011,6 +1081,7 @@ class SVGExporter extends HTMLElement {
         this.prevPoint = point;
     }
 
+    // 更新形状尺寸
     updateShape(point) {
         switch(this.currentTool) {
             case 'line':
@@ -1026,6 +1097,7 @@ class SVGExporter extends HTMLElement {
         }
     }
 
+    // 更新矩形尺寸
     updateRectDimensions(point) {
         const minX = Math.min(this.startPoint.x, point.x);
         const minY = Math.min(this.startPoint.y, point.y);
@@ -1035,6 +1107,7 @@ class SVGExporter extends HTMLElement {
         this.currentElement.setAttribute('height', Math.abs(point.y - this.startPoint.y));
     }
 
+    // 更新圆形半径
     updateCircleRadius(point) {
         const radius = Math.hypot(
             point.x - this.startPoint.x,
@@ -1045,12 +1118,14 @@ class SVGExporter extends HTMLElement {
         this.currentElement.setAttribute('r', radius);
     }
 
+    // 结束绘图动作
     handleEnd() {
         if (!this.isDrawing) return;
         this.finishDrawing();
         this.saveState();
     }
 
+    // 完成绘图过程
     finishDrawing() {
         this.isDrawing = false;
         if (this.currentTool === 'line' && this.isZeroLengthLine()) {
@@ -1059,12 +1134,14 @@ class SVGExporter extends HTMLElement {
         this.currentElement = null;
     }
 
+    // 检查线条是否长度为零
     isZeroLengthLine() {
         return this.currentElement.tagName === 'line' && 
                this.currentElement.x1.baseVal.value === this.currentElement.x2.baseVal.value &&
                this.currentElement.y1.baseVal.value === this.currentElement.y2.baseVal.value;
     }
 
+    // 将屏幕坐标转换为 SVG 坐标
     getCoordinates(e) {
         const rect = this.canvas.getBoundingClientRect();
         const clientX = e.touches?.[0].clientX || e.clientX;
@@ -1076,6 +1153,7 @@ class SVGExporter extends HTMLElement {
         };
     }
 
+    // 开始选择模式
     startSelection(e) {
         this.clearSelection();
         this.startPoint = this.getCoordinates(e);
@@ -1110,6 +1188,7 @@ class SVGExporter extends HTMLElement {
         this.canvas.addEventListener('mouseup', finish);
     }
 
+    // 保存选择状态
     saveSelectionState() {
         this.selection = {
             x: +this.selectionRect.x.baseVal.value,
@@ -1124,12 +1203,14 @@ class SVGExporter extends HTMLElement {
         this.saveState();
     }
 
+    // 清空整个画布
     clearCanvas() {
         this.canvas.innerHTML = '';
         this.clearSelection();
         this.saveState();
     }
 
+    // 清除当前选择
     clearSelection() {
         if (this.selectionRect) {
             this.selectionRect.remove();
@@ -1137,11 +1218,11 @@ class SVGExporter extends HTMLElement {
         }
     }
 
+    // 将画布导出为 SVG 文件
     exportSVG() {
         const clonedSVG = this.canvas.cloneNode(true);
         clonedSVG.querySelector('.selection-rect')?.remove();
         
-        // 确保SVG元素包含正确的xmlns属性
         clonedSVG.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
         
         if (this.selection?.width > 0 && this.selection?.height > 0) {
@@ -1159,7 +1240,6 @@ class SVGExporter extends HTMLElement {
             clonedSVG.setAttribute('height', this._canvasHeight);
         }
     
-        // 添加XML声明和DOCTYPE以符合标准格式
         const svgContent = [
             '<?xml version="1.0" standalone="no"?>',
             '<!DOCTYPE svg PUBLIC "-//W3//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">',
