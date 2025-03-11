@@ -34,24 +34,31 @@
     </style>
 </head>
 <body>
-    <div class="container">
         <!-- 3D 编辑器 -->
+         <div>
         <three-editor 
             width="600" 
             height="400"
             initial-size="1.5"
         ></three-editor>
-
+</div>
+<div>
         <!--Markdown 编辑器 -->
         <markdown-editor 
         content="%23%20%E6%AC%A2%E8%BF%8E%E4%BD%BF%E7%94%A8%0A%0A%60%60%60javascript%0Aconsole.log('Hello%20World')%3B%0A%60%60%60"
-        editor-height="600px"
+        editor-height="300px"
         theme="horizontal"
         button-size="16px"
         style="margin:20px;border:2px solid #eee;border-radius:8px;padding:15px;">
     </markdown-editor>
+</div>
 
-    <svg-exporter></svg-exporter>
-    </div>
+<div>
+    <svg-exporter 
+    canvas-width="1200" 
+    canvas-height="600" 
+    default-tool="rect"
+></svg-exporter>
+</div>
 </body>
 </html>

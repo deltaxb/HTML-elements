@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>SVG 嵌入示例</title>
+    <style>
+        /* 公共样式 */
+        .svg-container {
+            border: 1px solid #ccc;
+            margin: 20px;
+            padding: 10px;
+        }
+        /* 直接控制内联 SVG 的样式 */
+        #inline-svg rect {
+            transition: fill 0.3s;
+        }
+        #inline-svg rect:hover {
+            fill: #ff0000;
+        }
+    </style>
+</head>
+<body>
+    <h1>SVG 引入方式示例</h1>
+
+    <!-- 方式 2: 使用 img 标签 -->
+    <div class="svg-container">
+        <h2>通过 img 标签引入</h2>
+        <img src="drawing.svg" alt="SVG 图形说明" 
+             width="200" height="200">
+        <p>特点：适合静态 SVG，可通过 CSS 控制尺寸</p>
+    </div>
+</body>
+</html>
